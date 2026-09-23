@@ -24,9 +24,12 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _isInitialized = false;
   bool _isReadingText = false;
   bool _isTranslating = false;
+  bool _isDescribing = false;
   bool _isSpeaking = false;
   String? _extractedText;
   String? _translatedText;
+  String? _sceneDescription;
+  List<String> _sceneLabels = [];
   String? _sourceLanguageCode;
   String? _sourceLanguageName;
   String? _targetLanguageName;
@@ -220,6 +223,37 @@ class _CameraScreenState extends State<CameraScreen> {
         return;
       }
 
+      if (widget.mode == 'Describe Surroundings') {
+        setState(() {
+          _isDescribing = true;
+          _readError = null;
+          _sceneDescription = null;
+          _sceneLabels = [];
+        });
+        try {
+          final result = await DescribeSurroundingsService().describeImage(
+            image,
+          );
+          if (!mounted) return;
+          setState(() {
+            _isDescribing = false;
+            _sceneDescription = result['description'] as String? ?? '';
+            _sceneLabels = (result['labels'] as List<dynamic>? ?? [])
+                .whereType<Map<String, dynamic>>()
+                .map((label) => label['name'] as String? ?? '')
+                .where((name) => name.isNotEmpty)
+                .toList();
+          });
+        } catch (error) {
+          if (!mounted) return;
+          setState(() {
+            _isDescribing = false;
+            _readError = error.toString().replaceFirst('Exception: ', '');
+          });
+        }
+        return;
+      }
+
       Navigator.pop(context, image.path);
     } catch (e) {
       debugPrint('Camera capture error: $e');
@@ -235,6 +269,11 @@ class _CameraScreenState extends State<CameraScreen> {
           widget.mode == 'Translate' &&
               (_translatedText != null || _readError != null || _isTranslating)
           ? _buildTranslationResult()
+          : widget.mode == 'Describe Surroundings' &&
+                (_sceneDescription != null ||
+                    _readError != null ||
+                    _isDescribing)
+          ? _buildDescriptionResult()
           : _extractedText != null || _readError != null || _isReadingText
           ? _buildReadResult()
           : _isInitialized && _controller != null
@@ -491,6 +530,109 @@ class _CameraScreenState extends State<CameraScreen> {
                 icon: const Icon(Icons.camera_alt),
                 label: const Text('Try again'),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDescriptionResult() {
+    if (_isDescribing) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 20),
+            Text('Uploading photo and identifying objects…'),
+          ],
+        ),
+      );
+    }
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              _readError == null
+                  ? 'What Ava noticed'
+                  : 'Could not describe image',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: SingleChildScrollView(
+                child: _readError != null
+                    ? Text(
+                        _readError!,
+                        style: const TextStyle(fontSize: 18, height: 1.5),
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            _sceneDescription ?? '',
+                            style: const TextStyle(fontSize: 20, height: 1.5),
+                          ),
+                          if (_sceneLabels.isNotEmpty) ...[
+                            const SizedBox(height: 20),
+                            const Text(
+                              'Detected labels',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _sceneLabels
+                                  .map((label) => Chip(label: Text(label)))
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            const Text(
+                              'These are AI-detected labels and may miss details. Ava does not identify people.',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+              ),
+            ),
+            if (_sceneDescription != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: FilledButton.icon(
+                  onPressed: () => _toggleReadAloud(_sceneDescription!),
+                  icon: Icon(
+                    _isSpeaking ? Icons.stop_rounded : Icons.volume_up_rounded,
+                  ),
+                  label: Text(
+                    _isSpeaking ? 'Stop reading' : 'Read description aloud',
+                  ),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                  ),
+                ),
+              ),
+            FilledButton.icon(
+              onPressed: () => setState(() {
+                _readError = null;
+                _sceneDescription = null;
+                _sceneLabels = [];
+              }),
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Describe another photo'),
+            ),
           ],
         ),
       ),

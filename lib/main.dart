@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'camera_screen.dart';
+import 'read_text_service.dart';
 
 void main() {
   runApp(const AvaApp());
@@ -50,6 +51,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
   final stt.SpeechToText _speech = stt.SpeechToText();
 
   bool _isListening = false;
+  bool _isSendingEmergencyAlert = false;
   String _spokenText = '';
 
   Future<void> _listen() async {
@@ -126,16 +128,61 @@ class _AvaHomePageState extends State<AvaHomePage> {
         text.contains('around me')) {
       _openCamera('Describe Surroundings');
     } else if (text.contains('emergency') || text.contains('help')) {
-      _showMessage(
-        'Emergency Assistance',
-        'Ava is ready to help with an emergency.',
-      );
+      _sendEmergencyAlert();
     } else if (text.contains('medicine') ||
         text.contains('read') ||
         text.contains('text')) {
       _openCamera('Read Text');
     } else {
       _showMessage('I heard you', 'You said: "$command"');
+    }
+  }
+
+  Future<void> _sendEmergencyAlert() async {
+    if (_isSendingEmergencyAlert) return;
+
+    final shouldSend = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send emergency email?'),
+        content: const Text(
+          'Ava will email your confirmed alert address. This does not contact '
+          'emergency services or share your location.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.email_outlined),
+            label: const Text('Send email'),
+          ),
+        ],
+      ),
+    );
+    if (shouldSend != true || !mounted) return;
+
+    setState(() => _isSendingEmergencyAlert = true);
+    try {
+      await EmergencyAlertService().sendAlert();
+      if (mounted) {
+        _showMessage(
+          'Email alert sent',
+          'SNS accepted the emergency alert for delivery. This does not '
+              'contact emergency services.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        _showMessage(
+          'Could not send alert',
+          error.toString().replaceFirst('Exception: ', ''),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSendingEmergencyAlert = false);
     }
   }
 
@@ -251,9 +298,21 @@ class _AvaHomePageState extends State<AvaHomePage> {
                     _buildDemoCard(),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
-                      onPressed: () => _handleCommand('emergency'),
-                      icon: const Icon(Icons.emergency_rounded),
-                      label: const Text('Emergency assistance'),
+                      onPressed: _isSendingEmergencyAlert
+                          ? null
+                          : _sendEmergencyAlert,
+                      icon: _isSendingEmergencyAlert
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.emergency_rounded),
+                      label: Text(
+                        _isSendingEmergencyAlert
+                            ? 'Sending email alert…'
+                            : 'Emergency assistance',
+                      ),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFFFF9B9B),
                         side: const BorderSide(color: Color(0xFF733E50)),

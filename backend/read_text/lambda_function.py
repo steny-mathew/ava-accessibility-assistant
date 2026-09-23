@@ -1,4 +1,4 @@
-"""Ava's HTTP API handler for secure image uploads, OCR, and translation."""
+"""Ava's HTTP API handler for secure image uploads, OCR, translation, and alerts."""
 
 import json
 import os
@@ -15,6 +15,8 @@ ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png"}
 s3 = boto3.client("s3", region_name=REGION)
 rekognition = boto3.client("rekognition", region_name=REGION)
 translate = boto3.client("translate", region_name=REGION)
+sns = boto3.client("sns", region_name=REGION)
+EMERGENCY_TOPIC_ARN = os.environ.get("EMERGENCY_TOPIC_ARN", "")
 SUPPORTED_LANGUAGES = {
     "ar": "Arabic",
     "de": "German",
@@ -65,6 +67,10 @@ def lambda_handler(event, context):
         return _read_text(_body(event))
     if route == "POST /translate":
         return _translate_image(_body(event))
+    if route == "POST /describe":
+        return _describe_surroundings(_body(event))
+    if route == "POST /emergency-alert":
+        return _send_emergency_alert(_body(event))
     return _response(404, {"error": "Route not found"})
 
 
@@ -212,3 +218,96 @@ def _translate_image(payload):
             "targetLanguageName": SUPPORTED_LANGUAGES[target_language],
         },
     )
+
+
+def _describe_surroundings(payload):
+    bucket = payload.get("bucket")
+    key = unquote(payload.get("key", ""))
+    if bucket != BUCKET or not key.startswith("uploads/") or ".." in key:
+        return _response(400, {"error": "Invalid uploaded image reference"})
+
+    try:
+        metadata = s3.head_object(Bucket=BUCKET, Key=key)
+    except s3.exceptions.ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return _response(404, {"error": "Uploaded image was not found"})
+        raise
+
+    if metadata.get("ContentLength", 0) > 5 * 1024 * 1024:
+        return _response(413, {"error": "Image exceeds the 5 MB recognition limit"})
+    if metadata.get("ContentType") not in ALLOWED_CONTENT_TYPES:
+        return _response(400, {"error": "Uploaded object is not a JPEG or PNG image"})
+
+    try:
+        result = rekognition.detect_labels(
+            Image={"S3Object": {"Bucket": BUCKET, "Name": key}},
+            MaxLabels=10,
+            MinConfidence=70.0,
+        )
+    except ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code == "SubscriptionRequiredException":
+            return _response(503, {"error": "Amazon Rekognition labels are unavailable for this account."})
+        if error_code in {"AccessDenied", "AccessDeniedException", "UnauthorizedException"}:
+            return _response(
+                503,
+                {"error": "The ava-lambda-role needs rekognition:DetectLabels permission."},
+            )
+        raise
+
+    labels = []
+    seen = set()
+    for item in result.get("Labels", []):
+        name = item.get("Name", "").strip()
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            labels.append(
+                {
+                    "name": name,
+                    "confidence": round(float(item.get("Confidence", 0)), 1),
+                }
+            )
+
+    if not labels:
+        return _response(422, {"error": "Ava could not identify clear objects or scenes. Try another photo."})
+
+    names = [item["name"].lower() for item in labels[:8]]
+    if len(names) == 1:
+        description = f"Ava recognizes {names[0]} in the image."
+    else:
+        description = f"Ava recognizes {', '.join(names[:-1])}, and {names[-1]} in the image."
+    return _response(200, {"description": description, "labels": labels})
+
+
+def _send_emergency_alert(payload):
+    if not EMERGENCY_TOPIC_ARN:
+        return _response(503, {"error": "Emergency email alerts are not configured."})
+
+    is_test = payload.get("test") is True
+    subject = "Ava SNS test alert" if is_test else "Ava emergency assistance requested"
+    message = (
+        "This is a test of Ava's SNS email notification. No assistance is needed."
+        if is_test
+        else (
+            "Ava's Emergency Assistance button was activated. "
+            "Please check in with the person using Ava. "
+            "This alert does not include their location or identity."
+        )
+    )
+    try:
+        sns.publish(
+            TopicArn=EMERGENCY_TOPIC_ARN,
+            Subject=subject,
+            Message=message,
+        )
+    except ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code in {"AuthorizationError", "AccessDenied", "AccessDeniedException"}:
+            return _response(
+                503,
+                {"error": "The ava-lambda-role needs sns:Publish for its alert topic."},
+            )
+        raise
+
+    return _response(200, {"sent": True, "message": "Emergency email alert sent."})
