@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
+import 'auth_screen.dart';
 import 'camera_screen.dart';
 import 'read_text_service.dart';
 
@@ -19,24 +20,37 @@ class AvaApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.dark,
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFF0A1020),
+        scaffoldBackgroundColor: const Color(0xFF080C16),
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF8B83FF),
           brightness: Brightness.dark,
         ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(48, 56),
+            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0A1020),
+          backgroundColor: Color(0xFF080C16),
           foregroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
         ),
       ),
-      home: const AvaHomePage(),
+      home: AuthGate(
+        signedInBuilder: (onSignOut) => AvaHomePage(onSignOut: onSignOut),
+      ),
     );
   }
 }
 
 class AvaHomePage extends StatefulWidget {
-  const AvaHomePage({super.key});
+  final VoidCallback onSignOut;
+
+  const AvaHomePage({super.key, required this.onSignOut});
 
   @override
   State<AvaHomePage> createState() => _AvaHomePageState();
@@ -99,11 +113,19 @@ class _AvaHomePageState extends State<AvaHomePage> {
   }
 
   // Open the camera for a specific accessibility task.
-  Future<void> _openCamera(String mode, {String? demoText}) async {
+  Future<void> _openCamera(
+    String mode, {
+    String? demoText,
+    String? targetItem,
+  }) async {
     final imagePath = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => CameraScreen(mode: mode, demoText: demoText),
+        builder: (context) => CameraScreen(
+          mode: mode,
+          demoText: demoText,
+          targetItem: targetItem,
+        ),
       ),
     );
 
@@ -121,14 +143,25 @@ class _AvaHomePageState extends State<AvaHomePage> {
 
     // Translation is checked first because
     // "translate this text" also contains "text".
-    if (text.contains('translate') || text.contains('translation')) {
+    if (text.contains('emergency') || text.contains('help')) {
+      _sendEmergencyAlert();
+    } else if (text.contains('translate') || text.contains('translation')) {
       _openCamera('Translate');
+    } else if (text.contains('find ') ||
+        text.contains('locate ') ||
+        text.contains('where is ') ||
+        text.contains('where are ') ||
+        text.contains('look for ')) {
+      final target = _itemFromCommand(text);
+      if (target.isEmpty) {
+        _showMessage('What should I find?', 'Try saying “find my keys”.');
+      } else {
+        _openCamera('Find Item', targetItem: target);
+      }
     } else if (text.contains('describe') ||
         text.contains('surroundings') ||
         text.contains('around me')) {
       _openCamera('Describe Surroundings');
-    } else if (text.contains('emergency') || text.contains('help')) {
-      _sendEmergencyAlert();
     } else if (text.contains('medicine') ||
         text.contains('read') ||
         text.contains('text')) {
@@ -136,6 +169,50 @@ class _AvaHomePageState extends State<AvaHomePage> {
     } else {
       _showMessage('I heard you', 'You said: "$command"');
     }
+  }
+
+  String _itemFromCommand(String command) {
+    final match = RegExp(
+      r'\b(?:find|locate|look for)\s+(?:(?:me|my)\s+)?(.+)$|\bwhere\s+(?:is|are)\s+(?:my\s+)?(.+)$',
+    ).firstMatch(command);
+    final target = (match?.group(1) ?? match?.group(2) ?? '')
+        .replaceAll(RegExp(r'[?.!,]+$'), '')
+        .trim();
+    return target.length > 80 ? target.substring(0, 80).trim() : target;
+  }
+
+  Future<void> _askWhatToFind() async {
+    final controller = TextEditingController();
+    final item = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('What should Ava look for?'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+          decoration: const InputDecoration(
+            hintText: 'For example, water bottle',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || item == null || item.isEmpty) return;
+    await _openCamera('Find Item', targetItem: item);
   }
 
   Future<void> _sendEmergencyAlert() async {
@@ -265,6 +342,15 @@ class _AvaHomePageState extends State<AvaHomePage> {
                       accent: const Color(0xFFB7AEFF),
                       gradient: const [Color(0xFF34306A), Color(0xFF211F48)],
                       onTap: () => _openCamera('Read Text'),
+                    ),
+                    const SizedBox(height: 12),
+                    _ActionCard(
+                      icon: Icons.search_rounded,
+                      title: 'Find an item',
+                      description:
+                          'Ask Ava to look for something in a camera photo.',
+                      accent: const Color(0xFFFFC48A),
+                      onTap: _askWhatToFind,
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -419,6 +505,11 @@ class _AvaHomePageState extends State<AvaHomePage> {
             ],
           ),
         ),
+        IconButton(
+          onPressed: widget.onSignOut,
+          tooltip: 'Sign out',
+          icon: const Icon(Icons.logout_rounded),
+        ),
       ],
     );
   }
@@ -457,7 +548,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
                     const SizedBox(height: 6),
                     Text(
                       _isListening
-                          ? 'Say “read this” or “describe my surroundings”.'
+                          ? 'Try “read this”, “describe my surroundings”, or “find my bottle”.'
                           : 'Tell me what you need, hands-free.',
                       style: const TextStyle(
                         color: Color(0xFFC0C6D8),

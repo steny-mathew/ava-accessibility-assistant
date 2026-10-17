@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
 
+import 'cognito_auth_service.dart';
+
 class ReadTextService {
   static const _apiBaseUrl = String.fromEnvironment('AVA_API_BASE_URL');
 
@@ -16,7 +18,8 @@ class ReadTextService {
     final contentType = _contentType(image.path);
     final imageBytes = await image.readAsBytes();
     final baseUri = Uri.parse(_apiBaseUrl);
-    final requestHeaders = {'Content-Type': 'application/json'};
+    final requestHeaders = await CognitoAuthService.instance
+        .authorizationHeaders();
     final uploadResponse = await http
         .post(
           baseUri.resolve('/upload-url'),
@@ -96,7 +99,7 @@ class TranslationService {
         ? 'image/png'
         : 'image/jpeg';
     final baseUri = Uri.parse(_apiBaseUrl);
-    final headers = {'Content-Type': 'application/json'};
+    final headers = await CognitoAuthService.instance.authorizationHeaders();
     final uploadResponse = await http
         .post(
           baseUri.resolve('/upload-url'),
@@ -179,7 +182,7 @@ class EmergencyAlertService {
     final response = await http
         .post(
           Uri.parse(_apiBaseUrl).resolve('/emergency-alert'),
-          headers: {'Content-Type': 'application/json'},
+          headers: await CognitoAuthService.instance.authorizationHeaders(),
           body: jsonEncode({}),
         )
         .timeout(const Duration(seconds: 20));
@@ -201,7 +204,10 @@ class EmergencyAlertService {
 class DescribeSurroundingsService {
   static const _apiBaseUrl = String.fromEnvironment('AVA_API_BASE_URL');
 
-  Future<Map<String, dynamic>> describeImage(XFile image) async {
+  Future<Map<String, dynamic>> describeImage(
+    XFile image, {
+    String? targetItem,
+  }) async {
     if (_apiBaseUrl.isEmpty) {
       throw Exception(
         'Ava is not connected yet. Configure AVA_API_BASE_URL and restart the app.',
@@ -213,7 +219,7 @@ class DescribeSurroundingsService {
         ? 'image/png'
         : 'image/jpeg';
     final baseUri = Uri.parse(_apiBaseUrl);
-    final headers = {'Content-Type': 'application/json'};
+    final headers = await CognitoAuthService.instance.authorizationHeaders();
     final uploadResponse = await http
         .post(
           baseUri.resolve('/upload-url'),
@@ -241,7 +247,12 @@ class DescribeSurroundingsService {
         .post(
           baseUri.resolve('/describe'),
           headers: headers,
-          body: jsonEncode({'bucket': upload['bucket'], 'key': upload['key']}),
+          body: jsonEncode({
+            'bucket': upload['bucket'],
+            'key': upload['key'],
+            if (targetItem != null && targetItem.trim().isNotEmpty)
+              'target': targetItem.trim(),
+          }),
         )
         .timeout(const Duration(seconds: 60));
     return _decodeResponse(response);

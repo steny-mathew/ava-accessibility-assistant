@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import uuid
 from urllib.parse import unquote
 
@@ -48,6 +49,33 @@ def _response(status_code, payload):
         },
         "body": json.dumps(payload),
     }
+
+
+def _normalized_words(value):
+    words = re.findall(r"[a-z0-9]+", value.casefold())
+    ignored = {"a", "an", "find", "for", "i", "me", "my", "the", "to"}
+    normalized = set()
+    for word in words:
+        if word in ignored:
+            continue
+        if len(word) > 3 and word.endswith("ies"):
+            word = f"{word[:-3]}y"
+        elif len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+            word = word[:-1]
+        normalized.add(word)
+    return normalized
+
+
+def _label_matches_target(target, label):
+    target_words = _normalized_words(target)
+    candidates = [label.get("Name", "")]
+    candidates.extend(alias.get("Name", "") for alias in label.get("Aliases", []))
+    candidates.extend(parent.get("Name", "") for parent in label.get("Parents", []))
+    for candidate in candidates:
+        candidate_words = _normalized_words(candidate)
+        if target_words and candidate_words and target_words.intersection(candidate_words):
+            return True
+    return False
 
 
 def _body(event):
@@ -223,6 +251,10 @@ def _translate_image(payload):
 def _describe_surroundings(payload):
     bucket = payload.get("bucket")
     key = unquote(payload.get("key", ""))
+    target = payload.get("target")
+    if target is not None and (not isinstance(target, str) or len(target.strip()) > 80):
+        return _response(400, {"error": "The item to find must be 1 to 80 characters"})
+    target = target.strip() if isinstance(target, str) else ""
     if bucket != BUCKET or not key.startswith("uploads/") or ".." in key:
         return _response(400, {"error": "Invalid uploaded image reference"})
 
@@ -257,17 +289,42 @@ def _describe_surroundings(payload):
         raise
 
     labels = []
+    matches = []
+    target_detected = False
     seen = set()
     for item in result.get("Labels", []):
         name = item.get("Name", "").strip()
         if name and name.casefold() not in seen:
             seen.add(name.casefold())
+            confidence = round(float(item.get("Confidence", 0)), 1)
             labels.append(
                 {
                     "name": name,
-                    "confidence": round(float(item.get("Confidence", 0)), 1),
+                    "confidence": confidence,
                 }
             )
+            if target and _label_matches_target(target, item):
+                target_detected = True
+                for instance in item.get("Instances", []):
+                    box = instance.get("BoundingBox") or {}
+                    width = float(box.get("Width", 0))
+                    height = float(box.get("Height", 0))
+                    left = float(box.get("Left", 0))
+                    top = float(box.get("Top", 0))
+                    if width <= 0 or height <= 0:
+                        continue
+                    center_x = left + width / 2
+                    center_y = top + height / 2
+                    horizontal = "left" if center_x < 0.34 else "right" if center_x > 0.66 else "center"
+                    vertical = "top" if center_y < 0.34 else "bottom" if center_y > 0.66 else "middle"
+                    location = f"{vertical} {horizontal}" if vertical != "middle" else horizontal
+                    matches.append(
+                        {
+                            "name": name,
+                            "confidence": round(float(instance.get("Confidence", confidence)), 1),
+                            "location": location,
+                        }
+                    )
 
     if not labels:
         return _response(422, {"error": "Ava could not identify clear objects or scenes. Try another photo."})
@@ -277,7 +334,13 @@ def _describe_surroundings(payload):
         description = f"Ava recognizes {names[0]} in the image."
     else:
         description = f"Ava recognizes {', '.join(names[:-1])}, and {names[-1]} in the image."
-    return _response(200, {"description": description, "labels": labels})
+    response = {"description": description, "labels": labels}
+    if target:
+        response["target"] = target
+        response["targetDetected"] = target_detected
+        response["matches"] = matches
+        response["found"] = bool(matches)
+    return _response(200, response)
 
 
 def _send_emergency_alert(payload):

@@ -2,15 +2,23 @@ import 'dart:async';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'read_text_service.dart';
 
 class CameraScreen extends StatefulWidget {
   final String mode;
   final String? demoText;
+  final String? targetItem;
 
-  const CameraScreen({super.key, required this.mode, this.demoText});
+  const CameraScreen({
+    super.key,
+    required this.mode,
+    this.demoText,
+    this.targetItem,
+  });
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -18,6 +26,7 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen> {
   final FlutterTts _textToSpeech = FlutterTts();
+  final stt.SpeechToText _captureSpeech = stt.SpeechToText();
   CameraController? _controller;
   List<CameraDescription> _cameras = [];
 
@@ -26,6 +35,7 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _isTranslating = false;
   bool _isDescribing = false;
   bool _isSpeaking = false;
+  bool _isListeningForCapture = false;
   String? _extractedText;
   String? _translatedText;
   String? _sceneDescription;
@@ -72,6 +82,73 @@ class _CameraScreenState extends State<CameraScreen> {
       _extractedText = widget.demoText;
     } else {
       _initializeCamera();
+      if (widget.mode == 'Find Item') {
+        unawaited(_announceFindInstructions());
+      }
+    }
+  }
+
+  Future<void> _announceFindInstructions() async {
+    final item = widget.targetItem?.trim();
+    final request = item == null || item.isEmpty
+        ? 'Point your camera toward the area, then take a photo.'
+        : 'Ava will look for $item. Point your camera toward the area, then tap the microphone and say take photo, or use the take photo button.';
+    await _textToSpeech.setSpeechRate(0.45);
+    await _textToSpeech.setVolume(1.0);
+    await _textToSpeech.speak(
+      '$request The result is an estimate from one photo.',
+    );
+  }
+
+  Future<void> _listenForCapture() async {
+    if (_isListeningForCapture) {
+      await _captureSpeech.stop();
+      if (mounted) setState(() => _isListeningForCapture = false);
+      return;
+    }
+
+    try {
+      final available = await _captureSpeech.initialize(
+        onStatus: (status) {
+          if (status == 'done' && mounted) {
+            setState(() => _isListeningForCapture = false);
+          }
+        },
+        onError: (_) {
+          if (mounted) setState(() => _isListeningForCapture = false);
+        },
+      );
+      if (!available) {
+        await _toggleReadAloud(
+          'Voice capture is unavailable. Use the photo button.',
+        );
+        return;
+      }
+
+      if (mounted) setState(() => _isListeningForCapture = true);
+      await _toggleReadAloud('Listening. Say take photo when ready.');
+      await _captureSpeech.listen(
+        listenOptions: stt.SpeechListenOptions(
+          listenFor: const Duration(seconds: 10),
+        ),
+        onResult: (result) {
+          if (!result.finalResult) return;
+          final command = result.recognizedWords.toLowerCase();
+          final takePhoto = RegExp(
+            r'\b(take|capture|snap)\b.*\b(photo|picture|image)\b|\b(photo|picture|image)\b.*\b(take|capture|snap)\b',
+          ).hasMatch(command);
+          if (takePhoto && mounted) {
+            unawaited(_captureSpeech.stop());
+            setState(() => _isListeningForCapture = false);
+            unawaited(_takePicture());
+          }
+        },
+      );
+    } catch (_) {
+      if (mounted) setState(() => _isListeningForCapture = false);
+      await _toggleReadAloud(
+        'Voice capture did not start. Use the photo button.',
+      );
     }
   }
 
@@ -106,6 +183,7 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void dispose() {
     unawaited(_textToSpeech.stop());
+    unawaited(_captureSpeech.stop());
     _controller?.dispose();
     super.dispose();
   }
@@ -167,6 +245,9 @@ class _CameraScreenState extends State<CameraScreen> {
       final image = await _controller!.takePicture();
 
       if (!mounted) return;
+      if (widget.mode == 'Find Item') {
+        await HapticFeedback.mediumImpact();
+      }
 
       if (widget.mode == 'Read Text') {
         setState(() {
@@ -223,7 +304,8 @@ class _CameraScreenState extends State<CameraScreen> {
         return;
       }
 
-      if (widget.mode == 'Describe Surroundings') {
+      if (widget.mode == 'Describe Surroundings' ||
+          widget.mode == 'Find Item') {
         setState(() {
           _isDescribing = true;
           _readError = null;
@@ -231,19 +313,54 @@ class _CameraScreenState extends State<CameraScreen> {
           _sceneLabels = [];
         });
         try {
+          if (widget.mode == 'Find Item') {
+            await _toggleReadAloud(
+              'Photo captured. Checking for ${widget.targetItem ?? 'the item'} now.',
+            );
+          }
           final result = await DescribeSurroundingsService().describeImage(
             image,
+            targetItem: widget.mode == 'Find Item' ? widget.targetItem : null,
           );
           if (!mounted) return;
+          final labels = (result['labels'] as List<dynamic>? ?? [])
+              .whereType<Map<String, dynamic>>()
+              .map((label) => label['name'] as String? ?? '')
+              .where((name) => name.isNotEmpty)
+              .toList();
+          var description = result['description'] as String? ?? '';
+          if (widget.mode == 'Find Item') {
+            final target =
+                result['target'] as String? ??
+                widget.targetItem?.trim() ??
+                'the item';
+            final matches = (result['matches'] as List<dynamic>? ?? [])
+                .whereType<Map<String, dynamic>>()
+                .toList();
+            if (matches.isNotEmpty) {
+              final locations = matches
+                  .map((match) => match['location'] as String? ?? '')
+                  .where((location) => location.isNotEmpty)
+                  .toSet();
+              description = locations.isEmpty
+                  ? 'Ava may have detected $target, but could not estimate its position in the photo.'
+                  : 'Ava may see $target near the ${locations.join(' and ')} of the camera view. This is only an approximate image location.';
+            } else if (result['targetDetected'] == true) {
+              description =
+                  'Ava may see $target, but could not estimate its position in the photo. Try another angle.';
+            } else {
+              description =
+                  'Ava could not identify $target in this photo. Try pointing toward a different area and take another photo.';
+            }
+          }
           setState(() {
             _isDescribing = false;
-            _sceneDescription = result['description'] as String? ?? '';
-            _sceneLabels = (result['labels'] as List<dynamic>? ?? [])
-                .whereType<Map<String, dynamic>>()
-                .map((label) => label['name'] as String? ?? '')
-                .where((name) => name.isNotEmpty)
-                .toList();
+            _sceneDescription = description;
+            _sceneLabels = labels;
           });
+          if (widget.mode == 'Find Item') {
+            unawaited(_toggleReadAloud(description));
+          }
         } catch (error) {
           if (!mounted) return;
           setState(() {
@@ -254,6 +371,7 @@ class _CameraScreenState extends State<CameraScreen> {
         return;
       }
 
+      if (!mounted) return;
       Navigator.pop(context, image.path);
     } catch (e) {
       debugPrint('Camera capture error: $e');
@@ -280,7 +398,50 @@ class _CameraScreenState extends State<CameraScreen> {
           ? Stack(
               fit: StackFit.expand,
               children: [
-                CameraPreview(_controller!),
+                Semantics(
+                  label: 'Live camera view',
+                  child: CameraPreview(_controller!),
+                ),
+
+                if (widget.mode == 'Find Item')
+                  Positioned(
+                    top: 18,
+                    left: 20,
+                    right: 20,
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Card(
+                        color: const Color(0xEE171C2B),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Text(
+                            'Looking for ${widget.targetItem ?? 'an item'}. Point the camera around, then take a photo.',
+                            style: const TextStyle(fontSize: 16, height: 1.4),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                if (widget.mode == 'Find Item')
+                  Positioned(
+                    bottom: 134,
+                    left: 20,
+                    right: 20,
+                    child: FilledButton.icon(
+                      onPressed: _listenForCapture,
+                      icon: Icon(
+                        _isListeningForCapture
+                            ? Icons.mic_rounded
+                            : Icons.mic_none_rounded,
+                      ),
+                      label: Text(
+                        _isListeningForCapture
+                            ? 'Listening — say “take photo”'
+                            : 'Use voice to take photo',
+                      ),
+                    ),
+                  ),
 
                 if (widget.mode == 'Translate')
                   Positioned(
@@ -321,20 +482,27 @@ class _CameraScreenState extends State<CameraScreen> {
                   alignment: Alignment.bottomCenter,
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 40),
-                    child: GestureDetector(
+                    child: Semantics(
+                      button: true,
+                      label: widget.mode == 'Find Item'
+                          ? 'Take photo to look for ${widget.targetItem ?? 'an item'}'
+                          : 'Take photo',
                       onTap: _takePicture,
-                      child: Container(
-                        width: 76,
-                        height: 76,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                          border: Border.all(color: Colors.white70, width: 5),
-                        ),
-                        child: const Icon(
-                          Icons.camera_alt,
-                          color: Colors.black,
-                          size: 32,
+                      child: GestureDetector(
+                        onTap: _takePicture,
+                        child: Container(
+                          width: 76,
+                          height: 76,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                            border: Border.all(color: Colors.white70, width: 5),
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt,
+                            color: Colors.black,
+                            size: 32,
+                          ),
                         ),
                       ),
                     ),
@@ -378,12 +546,12 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Widget _buildTranslationResult() {
     if (_isTranslating) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 20),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 20),
             Text('Reading and translating text…'),
           ],
         ),
@@ -538,13 +706,20 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Widget _buildDescriptionResult() {
     if (_isDescribing) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 20),
-            Text('Uploading photo and identifying objects…'),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 20),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                widget.mode == 'Find Item'
+                    ? 'Photo captured. Checking for ${widget.targetItem ?? 'the item'}…'
+                    : 'Uploading photo and identifying objects…',
+              ),
+            ),
           ],
         ),
       );
@@ -558,7 +733,9 @@ class _CameraScreenState extends State<CameraScreen> {
           children: [
             Text(
               _readError == null
-                  ? 'What Ava noticed'
+                  ? widget.mode == 'Find Item'
+                        ? 'Item check'
+                        : 'What Ava noticed'
                   : 'Could not describe image',
               style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
@@ -604,6 +781,17 @@ class _CameraScreenState extends State<CameraScreen> {
                               ),
                             ),
                           ],
+                          if (widget.mode == 'Find Item') ...[
+                            const SizedBox(height: 12),
+                            const Text(
+                              'The position is approximate and based on one photo. Ava may miss the item or mistake another object for it.',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
               ),
@@ -631,7 +819,11 @@ class _CameraScreenState extends State<CameraScreen> {
                 _sceneLabels = [];
               }),
               icon: const Icon(Icons.camera_alt),
-              label: const Text('Describe another photo'),
+              label: Text(
+                widget.mode == 'Find Item'
+                    ? 'Scan another area'
+                    : 'Describe another photo',
+              ),
             ),
           ],
         ),
