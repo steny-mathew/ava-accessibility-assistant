@@ -28,7 +28,10 @@ class AvaApp extends StatelessWidget {
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             minimumSize: const Size(48, 56),
-            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            textStyle: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
             ),
@@ -292,7 +295,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF10172B), Color(0xFF090E19), Color(0xFF090E19)],
+            colors: [Color(0xFF12172B), Color(0xFF090D17), Color(0xFF080C16)],
           ),
         ),
         child: SafeArea(
@@ -300,38 +303,19 @@ class _AvaHomePageState extends State<AvaHomePage> {
             builder: (context, constraints) => Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
+                constraints: const BoxConstraints(maxWidth: 640),
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(22, 18, 22, 30),
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 32),
                   children: [
                     _buildHeader(),
-                    const SizedBox(height: 32),
-                    Text(
-                      _isListening ? 'I’m listening' : 'How can I help?',
-                      style: const TextStyle(
-                        fontSize: 32,
-                        height: 1.12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.7,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _isListening
-                          ? 'Tell me what you need, in your own words.'
-                          : 'Choose a tool or ask Ava out loud.',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        height: 1.45,
-                        color: Color(0xFFB7C0D3),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 22),
+                    _buildWelcomeCard(),
+                    const SizedBox(height: 14),
                     _buildVoiceCard(),
                     const SizedBox(height: 30),
                     const _SectionHeading(
-                      title: 'Your tools',
-                      subtitle: 'A quick way to get started',
+                      title: 'Choose a tool',
+                      subtitle: 'Tap a card or ask Ava by voice',
                     ),
                     const SizedBox(height: 14),
                     _ActionCard(
@@ -353,34 +337,23 @@ class _AvaHomePageState extends State<AvaHomePage> {
                       onTap: _askWhatToFind,
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: _ActionCard(
-                            icon: Icons.visibility_rounded,
-                            title: 'Describe',
-                            description:
-                                'Get help understanding what’s around you.',
-                            accent: const Color(0xFF8CE6D2),
-                            onTap: () => _openCamera('Describe Surroundings'),
-                            compact: true,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _ActionCard(
-                            icon: Icons.translate_rounded,
-                            title: 'Translate',
-                            description: 'Capture text for translation.',
-                            accent: const Color(0xFFFFD18A),
-                            onTap: () => _openCamera('Translate'),
-                            compact: true,
-                          ),
-                        ),
-                      ],
+                    _ActionCard(
+                      icon: Icons.visibility_rounded,
+                      title: 'Describe surroundings',
+                      description:
+                          'Hear a short summary of objects Ava recognizes.',
+                      accent: const Color(0xFF8CE6D2),
+                      onTap: () => _openCamera('Describe Surroundings'),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
+                    _ActionCard(
+                      icon: Icons.translate_rounded,
+                      title: 'Translate text',
+                      description: 'Capture printed text for translation.',
+                      accent: const Color(0xFFFFD18A),
+                      onTap: () => _openCamera('Translate'),
+                    ),
+                    const SizedBox(height: 20),
                     _buildDemoCard(),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
@@ -397,7 +370,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
                       label: Text(
                         _isSendingEmergencyAlert
                             ? 'Sending email alert…'
-                            : 'Emergency assistance',
+                            : 'Send emergency email',
                       ),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFFFF9B9B),
@@ -412,10 +385,22 @@ class _AvaHomePageState extends State<AvaHomePage> {
                         ),
                       ),
                     ),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(8, 8, 8, 0),
+                      child: Text(
+                        'This sends an email alert. It does not contact emergency services.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFFD5DAE8),
+                          fontSize: 13,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 22),
                     const Center(
                       child: Text(
-                        'A little help, right when you need it.',
+                        'Camera results can miss details and are not navigation guidance.',
                         style: TextStyle(
                           color: Color(0xFF778198),
                           fontSize: 13,
@@ -428,6 +413,67 @@ class _AvaHomePageState extends State<AvaHomePage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildWelcomeCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF292851), Color(0xFF171D34)],
+        ),
+        border: Border.all(color: const Color(0xFF45416F)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isListening ? 'I’m listening' : 'How can I help?',
+                  style: const TextStyle(
+                    fontSize: 28,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _isListening
+                      ? 'Tell me what you need, in your own words.'
+                      : 'Use your voice or choose one of the tools below.',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    height: 1.45,
+                    color: Color(0xFFE0E2F0),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 14),
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFFB2A8FF).withValues(alpha: 0.16),
+              border: Border.all(color: const Color(0xFF9D91FF)),
+            ),
+            child: const Icon(
+              Icons.auto_awesome_rounded,
+              color: Color(0xFFD1CAFF),
+              size: 28,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -481,30 +527,6 @@ class _AvaHomePageState extends State<AvaHomePage> {
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFF17251F),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: const Color(0xFF294537)),
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.circle, size: 8, color: Color(0xFF79D7A5)),
-              SizedBox(width: 7),
-              Text(
-                'READY',
-                style: TextStyle(
-                  color: Color(0xFFB7E9CA),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ],
-          ),
-        ),
         IconButton(
           onPressed: widget.onSignOut,
           tooltip: 'Sign out',
@@ -518,7 +540,8 @@ class _AvaHomePageState extends State<AvaHomePage> {
     final accent = _isListening
         ? const Color(0xFFFF858F)
         : const Color(0xFFB5ADFF);
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(26),
@@ -527,7 +550,21 @@ class _AvaHomePageState extends State<AvaHomePage> {
           end: Alignment.bottomRight,
           colors: [Color(0xFF242746), Color(0xFF181C31)],
         ),
-        border: Border.all(color: const Color(0xFF343957)),
+        border: Border.all(
+          color: _isListening
+              ? const Color(0xFFFF858F)
+              : const Color(0xFF454B70),
+          width: _isListening ? 1.6 : 1,
+        ),
+        boxShadow: _isListening
+            ? const [
+                BoxShadow(
+                  color: Color(0x337E617E),
+                  blurRadius: 22,
+                  spreadRadius: 1,
+                ),
+              ]
+            : const [],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -539,7 +576,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _isListening ? 'Listening now' : 'Talk to Ava',
+                      _isListening ? 'Listening now' : 'Speak to Ava',
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -549,11 +586,11 @@ class _AvaHomePageState extends State<AvaHomePage> {
                     Text(
                       _isListening
                           ? 'Try “read this”, “describe my surroundings”, or “find my bottle”.'
-                          : 'Tell me what you need, hands-free.',
+                          : 'Tap the microphone and say what you need.',
                       style: const TextStyle(
-                        color: Color(0xFFC0C6D8),
-                        fontSize: 14,
-                        height: 1.4,
+                        color: Color(0xFFE0E2F0),
+                        fontSize: 15,
+                        height: 1.45,
                       ),
                     ),
                   ],
@@ -563,6 +600,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
               Semantics(
                 button: true,
                 label: _isListening ? 'Stop listening to Ava' : 'Talk to Ava',
+                onTap: _listen,
                 child: Material(
                   color: accent.withValues(alpha: 0.16),
                   shape: const CircleBorder(),
@@ -570,8 +608,8 @@ class _AvaHomePageState extends State<AvaHomePage> {
                     onTap: _listen,
                     customBorder: const CircleBorder(),
                     child: SizedBox(
-                      width: 68,
-                      height: 68,
+                      width: 76,
+                      height: 76,
                       child: Icon(
                         _isListening ? Icons.stop_rounded : Icons.mic_rounded,
                         color: accent,
@@ -594,7 +632,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
               ),
               child: Text(
                 '“$_spokenText”',
-                style: const TextStyle(fontSize: 15, height: 1.4),
+                style: const TextStyle(fontSize: 16, height: 1.45),
               ),
             ),
           ],
@@ -671,7 +709,6 @@ class _ActionCard extends StatelessWidget {
   final Color accent;
   final List<Color>? gradient;
   final VoidCallback onTap;
-  final bool compact;
 
   const _ActionCard({
     required this.icon,
@@ -680,76 +717,81 @@ class _ActionCard extends StatelessWidget {
     required this.accent,
     required this.onTap,
     this.gradient,
-    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(20);
-    return Material(
-      color: Colors.transparent,
-      borderRadius: radius,
-      child: Ink(
-        decoration: BoxDecoration(
+    return Semantics(
+      button: true,
+      label: '$title. $description',
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
           borderRadius: radius,
-          color: gradient == null ? const Color(0xFF141C2D) : null,
-          gradient: gradient == null
-              ? null
-              : LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: gradient!,
-                ),
-          border: Border.all(color: const Color(0xFF2A344A)),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: radius,
-          child: Padding(
-            padding: EdgeInsets.all(compact ? 16 : 18),
-            child: Row(
-              children: [
-                Container(
-                  width: compact ? 42 : 52,
-                  height: compact ? 42 : 52,
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: Icon(icon, color: accent, size: compact ? 22 : 27),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: compact ? 15 : 17,
-                          fontWeight: FontWeight.w700,
-                        ),
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              color: gradient == null ? const Color(0xFF141C2D) : null,
+              gradient: gradient == null
+                  ? null
+                  : LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: gradient!,
+                    ),
+              border: Border.all(color: const Color(0xFF39455E)),
+            ),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: radius,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(17),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        description,
-                        style: TextStyle(
-                          color: const Color(0xFFC0C6D8),
-                          fontSize: compact ? 12 : 13,
-                          height: 1.35,
-                        ),
+                      child: Icon(icon, color: accent, size: 29),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            description,
+                            style: const TextStyle(
+                              color: Color(0xFFD5DAE8),
+                              fontSize: 14,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.arrow_forward_rounded,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                  ],
                 ),
-                if (!compact) ...[
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.arrow_forward_rounded,
-                    color: Colors.white70,
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),
