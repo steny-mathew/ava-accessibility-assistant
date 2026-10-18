@@ -6,6 +6,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'item_memory_service.dart';
 import 'speech_output.dart';
+import 'ava_theme.dart';
 
 class ItemMemoryScreen extends StatefulWidget {
   final String initialAction;
@@ -276,16 +277,17 @@ class _ItemMemoryScreenState extends State<ItemMemoryScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
               children: [
-                Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A2038),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: const Color(0xFF454B70)),
-                  ),
-                  child: const Text(
-                    'Tell Ava where you put something. Later, ask “Where are my keys?” Ava will recall the place you saved.',
-                    style: TextStyle(fontSize: 17, height: 1.5),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: const Text(
+                      'Tell Ava where you put something. Later, ask “Where are my keys?” Ava will recall the place you saved.',
+                      style: TextStyle(
+                        color: AvaColors.ink,
+                        fontSize: 17,
+                        height: 1.5,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -305,20 +307,21 @@ class _ItemMemoryScreenState extends State<ItemMemoryScreen> {
                 TextField(
                   controller: _itemController,
                   textCapitalization: TextCapitalization.sentences,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
                     labelText: 'What item?',
                     hintText: 'For example, keys',
-                    border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _locationController,
                   textCapitalization: TextCapitalization.sentences,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _remember(),
                   decoration: const InputDecoration(
                     labelText: 'Where did you put it?',
                     hintText: 'For example, top drawer by the door',
-                    border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -349,15 +352,18 @@ class _ItemMemoryScreenState extends State<ItemMemoryScreen> {
                   const SizedBox(height: 18),
                   Semantics(
                     liveRegion: true,
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF202943),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Text(
-                        _result!,
-                        style: const TextStyle(fontSize: 17, height: 1.5),
+                    child: Card(
+                      color: AvaColors.sage,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          _result!,
+                          style: const TextStyle(
+                            color: AvaColors.ink,
+                            fontSize: 17,
+                            height: 1.5,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -366,7 +372,7 @@ class _ItemMemoryScreenState extends State<ItemMemoryScreen> {
                 const Text(
                   'Saved places are tied to your Ava account. Ava recalls what you saved; it does not verify the item’s current location.',
                   style: TextStyle(
-                    color: Color(0xFFCDD3E1),
+                    color: AvaColors.muted,
                     fontSize: 14,
                     height: 1.5,
                   ),

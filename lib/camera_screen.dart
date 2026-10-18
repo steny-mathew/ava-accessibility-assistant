@@ -10,6 +10,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'read_text_service.dart';
 import 'regional_speech_service.dart';
 import 'speech_output.dart';
+import 'ava_theme.dart';
 
 class CameraScreen extends StatefulWidget {
   final String mode;
@@ -27,7 +28,8 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _CameraScreenState extends State<CameraScreen>
+    with WidgetsBindingObserver {
   final FlutterTts _textToSpeech = FlutterTts();
   final AudioPlayer _regionalSpeechPlayer = AudioPlayer();
   final stt.SpeechToText _captureSpeech = stt.SpeechToText();
@@ -35,6 +37,9 @@ class _CameraScreenState extends State<CameraScreen> {
   List<CameraDescription> _cameras = [];
 
   bool _isInitialized = false;
+  bool _isInitializingCamera = false;
+  bool _isCapturing = false;
+  bool _resumeCameraWhenActive = false;
   bool _isReadingText = false;
   bool _isTranslating = false;
   bool _isDescribing = false;
@@ -48,8 +53,9 @@ class _CameraScreenState extends State<CameraScreen> {
   String? _sourceLanguageName;
   String? _targetLanguageName;
   String? _readError;
+  String? _cameraError;
   String _sourceLanguageInputCode = 'en';
-  String _targetLanguageCode = 'es';
+  String _targetLanguageCode = 'hi';
 
   static const _languages = <String, String>{
     'en': 'English',
@@ -78,6 +84,7 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _textToSpeech.setCompletionHandler(() {
       if (mounted) setState(() => _isSpeaking = false);
     });
@@ -166,35 +173,84 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _initializeCamera() async {
+    if (_isInitializingCamera) return;
+    _isInitializingCamera = true;
+    if (mounted) {
+      setState(() {
+        _cameraError = null;
+        _isInitialized = false;
+      });
+    }
+
     try {
       _cameras = await availableCameras();
 
       if (_cameras.isEmpty) {
+        if (mounted) {
+          setState(
+            () => _cameraError = 'No camera is available on this device.',
+          );
+        }
         return;
       }
 
-      final camera = _cameras.first;
+      final camera = _cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.back,
+        orElse: () => _cameras.first,
+      );
 
-      _controller = CameraController(
+      final controller = CameraController(
         camera,
         ResolutionPreset.medium,
         enableAudio: false,
       );
+      await _controller?.dispose();
+      _controller = controller;
+      await controller.initialize();
 
-      await _controller!.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() => _isInitialized = true);
+    } catch (error) {
+      debugPrint('Camera initialization error: $error');
+      if (mounted) {
+        setState(() {
+          _isInitialized = false;
+          _cameraError = 'Ava couldn’t open the camera. Check camera access in Settings, then try again.';
+        });
+      }
+    } finally {
+      _isInitializingCamera = false;
+    }
+  }
 
-      if (!mounted) return;
-
-      setState(() {
-        _isInitialized = true;
-      });
-    } catch (e) {
-      debugPrint('Camera initialization error: $e');
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _resumeCameraWhenActive = _isInitialized;
+      final controller = _controller;
+      _controller = null;
+      if (mounted) setState(() => _isInitialized = false);
+      if (controller != null) unawaited(controller.dispose());
+      if (_isListeningForCapture) {
+        unawaited(_captureSpeech.stop());
+        if (mounted) setState(() => _isListeningForCapture = false);
+      }
+    } else if (state == AppLifecycleState.resumed &&
+        _resumeCameraWhenActive &&
+        widget.demoText == null) {
+      _resumeCameraWhenActive = false;
+      unawaited(_initializeCamera());
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_textToSpeech.stop());
     unawaited(_regionalSpeechPlayer.dispose());
     unawaited(_captureSpeech.stop());
@@ -207,9 +263,7 @@ class _CameraScreenState extends State<CameraScreen> {
     String speechLanguageCode = 'en',
   }) async {
     if (_isSpeaking) {
-      await _textToSpeech.stop();
-      await _regionalSpeechPlayer.stop();
-      if (mounted) setState(() => _isSpeaking = false);
+      await _stopReading();
       return;
     }
 
@@ -267,6 +321,12 @@ class _CameraScreenState extends State<CameraScreen> {
     }
   }
 
+  Future<void> _stopReading() async {
+    await _textToSpeech.stop();
+    await _regionalSpeechPlayer.stop();
+    if (mounted) setState(() => _isSpeaking = false);
+  }
+
   String _speechLocale(String code) {
     const locales = {
       'ar': 'ar-SA',
@@ -294,10 +354,13 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _takePicture() async {
-    if (_controller == null || !_controller!.value.isInitialized) {
+    if (_isCapturing ||
+        _controller == null ||
+        !_controller!.value.isInitialized) {
       return;
     }
 
+    setState(() => _isCapturing = true);
     try {
       final image = await _controller!.takePicture();
 
@@ -430,27 +493,54 @@ class _CameraScreenState extends State<CameraScreen> {
 
       if (!mounted) return;
       Navigator.pop(context, image.path);
-    } catch (e) {
-      debugPrint('Camera capture error: $e');
+    } catch (error) {
+      debugPrint('Camera capture error: $error');
+      if (mounted) {
+        setState(() {
+          _readError = 'Ava couldn’t take that photo. Try again.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isCapturing = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final hasResult =
+        (widget.mode == 'Translate' &&
+            (_translatedText != null ||
+                _readError != null ||
+                _isTranslating)) ||
+        ((widget.mode == 'Describe Surroundings' ||
+                widget.mode == 'Find Item') &&
+            (_sceneDescription != null ||
+                _readError != null ||
+                _isDescribing)) ||
+        (_extractedText != null || _readError != null || _isReadingText) ||
+        _cameraError != null;
+
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(backgroundColor: Colors.black, title: Text(widget.mode)),
+      backgroundColor: hasResult ? AvaColors.canvas : Colors.black,
+      appBar: AppBar(
+        backgroundColor: hasResult ? AvaColors.canvas : Colors.black,
+        foregroundColor: hasResult ? AvaColors.ink : Colors.white,
+        title: Text(widget.mode),
+      ),
       body:
           widget.mode == 'Translate' &&
               (_translatedText != null || _readError != null || _isTranslating)
           ? _buildTranslationResult()
-          : widget.mode == 'Describe Surroundings' &&
+          : (widget.mode == 'Describe Surroundings' ||
+                    widget.mode == 'Find Item') &&
                 (_sceneDescription != null ||
                     _readError != null ||
                     _isDescribing)
           ? _buildDescriptionResult()
           : _extractedText != null || _readError != null || _isReadingText
           ? _buildReadResult()
+          : _cameraError != null
+          ? _buildCameraError()
           : _isInitialized && _controller != null
           ? Stack(
               fit: StackFit.expand,
@@ -554,9 +644,9 @@ class _CameraScreenState extends State<CameraScreen> {
                       label: widget.mode == 'Find Item'
                           ? 'Take photo to look for ${widget.targetItem ?? 'an item'}'
                           : 'Take photo',
-                      onTap: _takePicture,
+                      onTap: _isCapturing ? null : _takePicture,
                       child: GestureDetector(
-                        onTap: _takePicture,
+                        onTap: _isCapturing ? null : _takePicture,
                         child: Container(
                           width: 76,
                           height: 76,
@@ -565,11 +655,19 @@ class _CameraScreenState extends State<CameraScreen> {
                             color: Colors.white,
                             border: Border.all(color: Colors.white70, width: 5),
                           ),
-                          child: const Icon(
-                            Icons.camera_alt,
-                            color: Colors.black,
-                            size: 32,
-                          ),
+                          child: _isCapturing
+                              ? const Padding(
+                                  padding: EdgeInsets.all(22),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.camera_alt,
+                                  color: Colors.black,
+                                  size: 32,
+                                ),
                         ),
                       ),
                     ),
@@ -577,7 +675,49 @@ class _CameraScreenState extends State<CameraScreen> {
                 ),
               ],
             )
-          : const Center(child: CircularProgressIndicator()),
+          : const Center(child: CircularProgressIndicator(color: Colors.white)),
+    );
+  }
+
+  Widget _buildCameraError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.camera_alt_outlined,
+                    color: AvaColors.primary,
+                    size: 36,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _cameraError!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AvaColors.ink,
+                      fontSize: 17,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _isInitializingCamera ? null : _initializeCamera,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try camera again'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -594,7 +734,7 @@ class _CameraScreenState extends State<CameraScreen> {
             child: DropdownButton<String>(
               value: value,
               isExpanded: true,
-              dropdownColor: const Color(0xFF171C2B),
+              dropdownColor: AvaColors.surface,
               items: _languages.entries
                   .map(
                     (language) => DropdownMenuItem(
@@ -633,13 +773,17 @@ class _CameraScreenState extends State<CameraScreen> {
           children: [
             Text(
               _readError == null ? 'Translation' : 'Could not translate',
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: AvaColors.ink,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 8),
             if (_readError == null)
               Text(
                 '${_sourceLanguageName ?? _languages[_sourceLanguageCode] ?? 'Source'} · ${_targetLanguageName ?? _languages[_targetLanguageCode]}',
-                style: const TextStyle(color: Colors.white70),
+                style: const TextStyle(color: AvaColors.muted),
               ),
             const SizedBox(height: 16),
             Expanded(
@@ -647,7 +791,11 @@ class _CameraScreenState extends State<CameraScreen> {
                 child: _readError != null
                     ? Text(
                         _readError!,
-                        style: const TextStyle(fontSize: 18, height: 1.5),
+                        style: const TextStyle(
+                          color: AvaColors.ink,
+                          fontSize: 18,
+                          height: 1.5,
+                        ),
                       )
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -686,11 +834,15 @@ class _CameraScreenState extends State<CameraScreen> {
                 ),
               ),
             FilledButton.icon(
-              onPressed: () => setState(() {
-                _readError = null;
-                _extractedText = null;
-                _translatedText = null;
-              }),
+              onPressed: () async {
+                await _stopReading();
+                if (!mounted) return;
+                setState(() {
+                  _readError = null;
+                  _extractedText = null;
+                  _translatedText = null;
+                });
+              },
               icon: const Icon(Icons.camera_alt),
               label: const Text('Scan another text'),
             ),
@@ -724,13 +876,17 @@ class _CameraScreenState extends State<CameraScreen> {
           children: [
             Text(
               widget.demoText == null ? 'Recognized text' : 'Sample text demo',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: AvaColors.ink,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             if (widget.demoText != null) ...[
               const SizedBox(height: 12),
               const Text(
                 'Demo content only. This sample was not captured or processed by Textract.',
-                style: TextStyle(fontSize: 14, color: Colors.white70),
+                style: TextStyle(fontSize: 14, color: AvaColors.muted),
               ),
             ],
             const SizedBox(height: 16),
@@ -738,7 +894,11 @@ class _CameraScreenState extends State<CameraScreen> {
               child: SingleChildScrollView(
                 child: SelectableText(
                   _readError ?? (text!.isEmpty ? 'No text was found.' : text),
-                  style: const TextStyle(fontSize: 20, height: 1.5),
+                  style: const TextStyle(
+                    color: AvaColors.ink,
+                    fontSize: 20,
+                    height: 1.5,
+                  ),
                 ),
               ),
             ),
@@ -758,12 +918,26 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
             if (_readError != null)
               FilledButton.icon(
-                onPressed: () => setState(() {
-                  _readError = null;
-                  _extractedText = null;
-                }),
+                onPressed: () async {
+                  await _stopReading();
+                  if (!mounted) return;
+                  setState(() {
+                    _readError = null;
+                    _extractedText = null;
+                  });
+                },
                 icon: const Icon(Icons.camera_alt),
                 label: const Text('Try again'),
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await _stopReading();
+                  if (!mounted) return;
+                  setState(() => _extractedText = null);
+                },
+                icon: const Icon(Icons.camera_alt_outlined),
+                label: const Text('Scan another page'),
               ),
           ],
         ),
@@ -804,7 +978,11 @@ class _CameraScreenState extends State<CameraScreen> {
                         ? 'Item check'
                         : 'What Ava noticed'
                   : 'Could not describe image',
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: AvaColors.ink,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 12),
             Expanded(
@@ -812,14 +990,22 @@ class _CameraScreenState extends State<CameraScreen> {
                 child: _readError != null
                     ? Text(
                         _readError!,
-                        style: const TextStyle(fontSize: 18, height: 1.5),
+                        style: const TextStyle(
+                          color: AvaColors.ink,
+                          fontSize: 18,
+                          height: 1.5,
+                        ),
                       )
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
                             _sceneDescription ?? '',
-                            style: const TextStyle(fontSize: 20, height: 1.5),
+                            style: const TextStyle(
+                              color: AvaColors.ink,
+                              fontSize: 20,
+                              height: 1.5,
+                            ),
                           ),
                           if (_sceneLabels.isNotEmpty) ...[
                             const SizedBox(height: 20),
@@ -842,7 +1028,7 @@ class _CameraScreenState extends State<CameraScreen> {
                             const Text(
                               'These are AI-detected labels and may miss details. Ava does not identify people.',
                               style: TextStyle(
-                                color: Colors.white70,
+                                color: AvaColors.muted,
                                 fontSize: 13,
                                 height: 1.4,
                               ),
@@ -853,7 +1039,7 @@ class _CameraScreenState extends State<CameraScreen> {
                             const Text(
                               'The position is approximate and based on one photo. Ava may miss the item or mistake another object for it.',
                               style: TextStyle(
-                                color: Colors.white70,
+                                color: AvaColors.muted,
                                 fontSize: 13,
                                 height: 1.4,
                               ),
@@ -880,11 +1066,15 @@ class _CameraScreenState extends State<CameraScreen> {
                 ),
               ),
             FilledButton.icon(
-              onPressed: () => setState(() {
-                _readError = null;
-                _sceneDescription = null;
-                _sceneLabels = [];
-              }),
+              onPressed: () async {
+                await _stopReading();
+                if (!mounted) return;
+                setState(() {
+                  _readError = null;
+                  _sceneDescription = null;
+                  _sceneLabels = [];
+                });
+              },
               icon: const Icon(Icons.camera_alt),
               label: Text(
                 widget.mode == 'Find Item'
@@ -915,10 +1105,10 @@ class _TranslationTextCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: emphasized ? const Color(0xFF292651) : const Color(0xFF1D2332),
-        borderRadius: BorderRadius.circular(18),
+        color: emphasized ? AvaColors.sage : AvaColors.surface,
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: emphasized ? const Color(0xFF7B70D8) : const Color(0xFF343C4D),
+          color: emphasized ? AvaColors.primary : AvaColors.border,
         ),
       ),
       child: Column(
@@ -926,12 +1116,16 @@ class _TranslationTextCard extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(color: Colors.white70, fontSize: 14),
+            style: const TextStyle(color: AvaColors.muted, fontSize: 14),
           ),
           const SizedBox(height: 8),
           SelectableText(
             text,
-            style: const TextStyle(fontSize: 19, height: 1.45),
+            style: const TextStyle(
+              color: AvaColors.ink,
+              fontSize: 19,
+              height: 1.45,
+            ),
           ),
         ],
       ),
