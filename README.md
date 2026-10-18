@@ -11,6 +11,7 @@ Ava is a Flutter accessibility assistant designed to help people interact with p
 - Emergency email alert: the user confirms before Ava asks the existing Lambda to publish a fixed alert message to the confirmed SNS email topic.
 - Describe Surroundings: Flutter uploads a captured photo through the presigned S3 flow, then Amazon Rekognition DetectLabels returns detected object and scene labels for display and read-aloud.
 - Find an item: voice command or button entry selects an item; Ava reuses the same image upload and Rekognition DetectLabels call, and speaks an approximate image region when Rekognition returns an object box. The camera supports both an accessible shutter button and a voice shutter command (“take photo”).
+- Remember an item: save a spoken or typed item and place, then ask “Where are my keys?” to hear the last place saved. Memories are isolated by the signed-in Cognito user and can be deleted from the memory screen.
 - Python 3.12 Lambda handler calls Amazon Rekognition `DetectText` and Amazon Translate `TranslateText`.
 - OCR result screen with selectable text, retry on errors, and **Read aloud / Stop reading** using the device or browser text-to-speech engine.
 - A clearly labeled sample read-aloud demo, so the text-to-speech feature can be demonstrated while Textract account access is pending.
@@ -31,6 +32,8 @@ Flutter camera
 ```
 
 Translation uses the same upload path, followed by `POST /translate`, Rekognition text detection, and Amazon Translate.
+
+Item memory uses the authenticated `POST /item-memory` route. The Lambda reads the user identity from verified Cognito JWT claims and stores the item and place in DynamoDB; the client cannot choose another user's partition key. Ava reports the last saved place and does not verify that the item is still there.
 
 Emergency Assistance asks before sending. `POST /emergency-alert` publishes a fixed message through Amazon SNS to the configured topic. The email alert does not include location, does not identify the user, and does not contact emergency services.
 
@@ -68,7 +71,7 @@ In Ava, choose **Create account**, enter your email and password, and enter the 
 
 - Region: `us-east-1`
 - HTTP API: `https://36emce4it9.execute-api.us-east-1.amazonaws.com`
-- Routes: `POST /upload-url`, `POST /read-text`, `POST /translate`, `POST /describe`, and `POST /emergency-alert`
+- Routes: `POST /upload-url`, `POST /read-text`, `POST /translate`, `POST /describe`, `POST /emergency-alert`, and `POST /item-memory`
 - S3 bucket: `ava-accessibility-images-1789928506`
 - Lambda: `ava-read-text`
 - Cognito user pool: `us-east-1_fNY6RbZDj` (Lite tier)
@@ -76,6 +79,8 @@ In Ava, choose **Create account**, enter your email and password, and enter the 
 - API Gateway JWT authorizer: `AvaCognitoJwtAuthorizer`
 
 The Flutter app uses only the API URL. It does not contain AWS access keys or secret keys.
+
+Item memory uses the `ava-item-memories` DynamoDB table with on-demand billing, partition key `userId`, and sort key `itemKey`. The Lambda needs the `ITEM_MEMORY_TABLE` environment variable and only `dynamodb:PutItem`, `dynamodb:GetItem`, and `dynamodb:DeleteItem` on that table.
 
 The Lambda requires `EMERGENCY_TOPIC_ARN` and `sns:Publish` scoped to that topic. The SNS email subscription must be confirmed before messages can be delivered.
 
@@ -90,4 +95,6 @@ Amazon Textract currently returns `SubscriptionRequiredException` for this AWS a
 1. Test Describe Surroundings with real camera photos on the iPhone and review label quality.
 2. Sign up and confirm an account on the iPhone, then verify authenticated Read Text and other backend calls.
 3. Resolve Amazon Textract and Amazon Translate account access if those services are needed.
-4. Add persistent scan history and user preferences, then expand accessibility checks.
+4. Test voice memory and screen-reader interaction with blind and low-vision users.
+
+The DynamoDB table can incur charges for stored data and read/write requests. On-demand billing charges according to use; check AWS Billing for account-specific credits and current charges.

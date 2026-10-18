@@ -4,6 +4,7 @@ import json
 import os
 import re
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import unquote
 
 import boto3
@@ -17,6 +18,8 @@ s3 = boto3.client("s3", region_name=REGION)
 rekognition = boto3.client("rekognition", region_name=REGION)
 translate = boto3.client("translate", region_name=REGION)
 sns = boto3.client("sns", region_name=REGION)
+dynamodb = boto3.resource("dynamodb", region_name=REGION)
+ITEM_MEMORY_TABLE = os.environ.get("ITEM_MEMORY_TABLE", "")
 EMERGENCY_TOPIC_ARN = os.environ.get("EMERGENCY_TOPIC_ARN", "")
 SUPPORTED_LANGUAGES = {
     "ar": "Arabic",
@@ -99,7 +102,69 @@ def lambda_handler(event, context):
         return _describe_surroundings(_body(event))
     if route == "POST /emergency-alert":
         return _send_emergency_alert(_body(event))
+    if route == "POST /item-memory":
+        return _item_memory(event, _body(event))
     return _response(404, {"error": "Route not found"})
+
+
+def _item_memory(event, payload):
+    """Store, recall, or forget one item location for the signed-in user."""
+    if not ITEM_MEMORY_TABLE:
+        return _response(503, {"error": "Item memory is not configured yet."})
+
+    claims = (
+        event.get("requestContext", {})
+        .get("authorizer", {})
+        .get("jwt", {})
+        .get("claims", {})
+    )
+    user_id = claims.get("sub")
+    if not user_id:
+        return _response(401, {"error": "Sign in to use item memory."})
+
+    action = payload.get("action")
+    item_name = payload.get("itemName")
+    if action not in {"remember", "recall", "forget"}:
+        return _response(400, {"error": "Choose remember, recall, or forget."})
+    if not isinstance(item_name, str) or not item_name.strip() or len(item_name.strip()) > 80:
+        return _response(400, {"error": "Item name must be 1 to 80 characters."})
+
+    item_name = " ".join(item_name.split())
+    item_key = re.sub(r"^(?:my|our|the|a|an)\s+", "", item_name.casefold())
+    table = dynamodb.Table(ITEM_MEMORY_TABLE)
+
+    if action == "remember":
+        location = payload.get("location")
+        if not isinstance(location, str) or not location.strip() or len(location.strip()) > 240:
+            return _response(400, {"error": "Location must be 1 to 240 characters."})
+        table.put_item(
+            Item={
+                "userId": user_id,
+                "itemKey": item_key,
+                "itemName": item_name,
+                "location": " ".join(location.split()),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        return _response(200, {"saved": True, "itemName": item_name})
+
+    if action == "forget":
+        table.delete_item(Key={"userId": user_id, "itemKey": item_key})
+        return _response(200, {"deleted": True, "itemName": item_name})
+
+    result = table.get_item(Key={"userId": user_id, "itemKey": item_key})
+    item = result.get("Item")
+    if not item:
+        return _response(200, {"found": False, "itemName": item_name})
+    return _response(
+        200,
+        {
+            "found": True,
+            "itemName": item.get("itemName", item_name),
+            "location": item.get("location", ""),
+            "updatedAt": item.get("updatedAt", ""),
+        },
+    )
 
 
 def _create_upload_url(payload):

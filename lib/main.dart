@@ -3,6 +3,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'auth_screen.dart';
 import 'camera_screen.dart';
+import 'item_memory_screen.dart';
 import 'read_text_service.dart';
 
 void main() {
@@ -140,6 +141,23 @@ class _AvaHomePageState extends State<AvaHomePage> {
     }
   }
 
+  Future<void> _openItemMemory({
+    String action = 'remember',
+    String item = '',
+    String location = '',
+  }) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ItemMemoryScreen(
+          initialAction: action,
+          initialItem: item,
+          initialLocation: location,
+        ),
+      ),
+    );
+  }
+
   // Understand what the user asked Ava to do.
   void _handleCommand(String command) {
     final text = command.toLowerCase();
@@ -148,6 +166,15 @@ class _AvaHomePageState extends State<AvaHomePage> {
     // "translate this text" also contains "text".
     if (text.contains('emergency') || text.contains('help')) {
       _sendEmergencyAlert();
+    } else if (_isRememberCommand(text)) {
+      final memory = _parseMemoryCommand(text);
+      _openItemMemory(
+        action: 'remember',
+        item: memory?.$1 ?? '',
+        location: memory?.$2 ?? '',
+      );
+    } else if (_isRecallCommand(text)) {
+      _openItemMemory(action: 'recall', item: _itemToRecall(text));
     } else if (text.contains('translate') || text.contains('translation')) {
       _openCamera('Translate');
     } else if (text.contains('find ') ||
@@ -172,6 +199,62 @@ class _AvaHomePageState extends State<AvaHomePage> {
     } else {
       _showMessage('I heard you', 'You said: "$command"');
     }
+  }
+
+  bool _isRememberCommand(String text) =>
+      text.startsWith('remember ') ||
+      text.startsWith('i put ') ||
+      text.startsWith('i left ') ||
+      text.startsWith('i placed ');
+
+  bool _isRecallCommand(String text) =>
+      text.contains('where did i put') ||
+      text.contains('where did i leave') ||
+      text.contains('where is my ') ||
+      text.contains('where are my ') ||
+      text.contains('where is the ') ||
+      text.contains('where are the ');
+
+  (String, String)? _parseMemoryCommand(String text) {
+    var clean = text.trim().replaceAll(RegExp(r'[?.!,]+$'), '');
+    clean = clean.replaceFirst(
+      RegExp(
+        r'^(?:please\s+)?(?:remember\s+that\s+|remember\s+)',
+        caseSensitive: false,
+      ),
+      '',
+    );
+    clean = clean.replaceFirst(
+      RegExp(r'^i\s+(?:put|left|placed)\s+', caseSensitive: false),
+      '',
+    );
+    final match = RegExp(
+      r'^(.+?)\s+(?:(?:is|are|was|were)\s+)?(?:in|on|at|inside|near|by)\s+(.+)$',
+      caseSensitive: false,
+    ).firstMatch(clean);
+    if (match == null) return null;
+    final item = match
+        .group(1)!
+        .trim()
+        .replaceFirst(RegExp(r'^(?:my|the|a|an)\s+', caseSensitive: false), '');
+    final location = match.group(2)!.trim();
+    if (item.isEmpty ||
+        location.isEmpty ||
+        item.length > 80 ||
+        location.length > 240) {
+      return null;
+    }
+    return (item, location);
+  }
+
+  String _itemToRecall(String text) {
+    final match = RegExp(
+      r'\b(?:where\s+(?:is|are)|where\s+did\s+i\s+(?:put|leave))\s+(?:my|the)\s+(.+)$',
+    ).firstMatch(text);
+    final item = (match?.group(1) ?? '')
+        .replaceAll(RegExp(r'[?.!,]+$'), '')
+        .trim();
+    return item.length > 80 ? item.substring(0, 80).trim() : item;
   }
 
   String _itemFromCommand(String command) {
@@ -318,6 +401,15 @@ class _AvaHomePageState extends State<AvaHomePage> {
                       subtitle: 'Tap a card or ask Ava by voice',
                     ),
                     const SizedBox(height: 14),
+                    _ActionCard(
+                      icon: Icons.bookmark_add_outlined,
+                      title: 'Remember an item',
+                      description:
+                          'Save where you put something and ask Ava later.',
+                      accent: const Color(0xFFFFC48A),
+                      onTap: () => _openItemMemory(),
+                    ),
+                    const SizedBox(height: 12),
                     _ActionCard(
                       icon: Icons.document_scanner_rounded,
                       title: 'Read printed text',
@@ -585,7 +677,7 @@ class _AvaHomePageState extends State<AvaHomePage> {
                     const SizedBox(height: 6),
                     Text(
                       _isListening
-                          ? 'Try “read this”, “describe my surroundings”, or “find my bottle”.'
+                          ? 'Try “read this”, “remember my keys in the drawer”, or “where are my keys?”.'
                           : 'Tap the microphone and say what you need.',
                       style: const TextStyle(
                         color: Color(0xFFE0E2F0),
