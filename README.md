@@ -12,9 +12,9 @@ Ava is a Flutter accessibility assistant designed to help people interact with p
 - Describe Surroundings: Flutter uploads a captured photo through the presigned S3 flow, then Amazon Rekognition DetectLabels returns detected object and scene labels for display and read-aloud.
 - Find an item: voice command or button entry selects an item; Ava reuses the same image upload and Rekognition DetectLabels call, and speaks an approximate image region when Rekognition returns an object box. The camera supports both an accessible shutter button and a voice shutter command (“take photo”).
 - Remember an item: save a spoken or typed item and place, then ask “Where are my keys?” to hear the last place saved. Memories are isolated by the signed-in Cognito user and can be deleted from the memory screen.
-- Python 3.12 Lambda handler calls Amazon Rekognition `DetectText` and Amazon Translate `TranslateText`.
+- Python 3.12 Lambda handler uses Amazon Textract `DetectDocumentText` for Read Text and Amazon Translate `TranslateText` for translation. Translation image extraction still uses Rekognition `DetectText`.
 - OCR result screen with selectable text, retry on errors, and **Read aloud / Stop reading** using the device or browser text-to-speech engine.
-- A clearly labeled sample read-aloud demo, so the text-to-speech feature can be demonstrated while Textract account access is pending.
+- A clearly labeled sample read-aloud demo, so speech output can be demonstrated without presenting sample content as OCR output.
 - S3 upload validation for JPEG/PNG images and a 5 MB limit.
 - Cognito email sign-up/sign-in; ID and refresh tokens are stored in iOS Keychain using `flutter_secure_storage`.
 - API Gateway JWT authorization on all five routes. The mobile Cognito client has no client secret, and Flutter contains no AWS credentials.
@@ -27,11 +27,11 @@ Flutter camera
   → short-lived presigned PUT to private S3 bucket
   → API Gateway HTTP API (/read-text)
   → Lambda (Python 3.12, boto3)
-  → Amazon Rekognition DetectText
+  → Amazon Textract DetectDocumentText
   → JSON text response in Flutter
 ```
 
-Translation uses the same upload path, followed by `POST /translate`, Rekognition text detection, and Amazon Translate.
+Translation uses the same upload path, followed by `POST /translate`, Rekognition text detection, and Amazon Translate. Output targets include Hindi, Malayalam, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, and Punjabi. Rekognition's current text detection supports English, Arabic, Russian, German, French, Italian, Portuguese, and Spanish, so scanning Indic-script text for translation is not supported by that separate OCR path yet. Read-aloud depends on available device voices; AWS Polly currently lists Hindi and Indian English, but not Malayalam or the other regional languages.
 
 Item memory uses the authenticated `POST /item-memory` route. The Lambda reads the user identity from verified Cognito JWT claims and stores the item and place in DynamoDB; the client cannot choose another user's partition key. Ava reports the last saved place and does not verify that the item is still there.
 
@@ -88,13 +88,13 @@ API Gateway applies stage throttling: the default limit is 5 requests per second
 
 ## Current limitation
 
-Amazon Textract currently returns `SubscriptionRequiredException` for this AWS account, so Ava's Read Text endpoint uses Amazon Rekognition `DetectText` instead. Rekognition text detection has a 100-word limit per image. Translate supports English, Arabic, Chinese (Simplified), French, German, Hindi, Italian, Japanese, Korean, Malayalam, Marathi, Portuguese, Spanish, Tamil, Telugu, and Urdu. The existing Lambda role has `translate:TranslateText` permission. A live Lambda smoke test successfully recognized “Hello world” from an uploaded test image and returned the Hindi translation “हेलो वर्ल्ड”.
+Read Text uses Amazon Textract `DetectDocumentText`. A live Lambda test on a synthetic image returned the exact word `TEXTRACT`; a longer test showed OCR can miss or reorder characters, so review important text. The separate Translate route still uses Rekognition `DetectText`, which has a 100-word limit per image and supports English, Arabic, Russian, German, French, Italian, Portuguese, and Spanish. Amazon Translate additionally supports Bengali, Gujarati, Kannada, Malayalam, Marathi, Punjabi, Tamil, Telugu, and Hindi as output languages. The existing Lambda role has `translate:TranslateText` permission.
 
 ## Next implementation steps
 
 1. Test Describe Surroundings with real camera photos on the iPhone and review label quality.
-2. Sign up and confirm an account on the iPhone, then verify authenticated Read Text and other backend calls.
-3. Resolve Amazon Textract account access if Textract is needed; current Read Text OCR uses Rekognition.
+2. Sign up and confirm an account on the iPhone, then verify authenticated Read Text and other backend calls from the app.
+3. Extend the translation flow to use Textract where appropriate, so text in Indic scripts can be extracted before translation.
 4. Test voice memory and screen-reader interaction with blind and low-vision users.
 
 The DynamoDB table can incur charges for stored data and read/write requests. On-demand billing charges according to use; check AWS Billing for account-specific credits and current charges.

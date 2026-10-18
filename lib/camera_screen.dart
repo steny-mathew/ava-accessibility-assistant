@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'read_text_service.dart';
+import 'regional_speech_service.dart';
 import 'speech_output.dart';
 
 class CameraScreen extends StatefulWidget {
@@ -27,6 +29,7 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen> {
   final FlutterTts _textToSpeech = FlutterTts();
+  final AudioPlayer _regionalSpeechPlayer = AudioPlayer();
   final stt.SpeechToText _captureSpeech = stt.SpeechToText();
   CameraController? _controller;
   List<CameraDescription> _cameras = [];
@@ -51,16 +54,21 @@ class _CameraScreenState extends State<CameraScreen> {
   static const _languages = <String, String>{
     'en': 'English',
     'ar': 'Arabic',
+    'bn': 'Bengali',
     'de': 'German',
     'es': 'Spanish',
     'fr': 'French',
+    'gu': 'Gujarati',
     'hi': 'Hindi',
     'it': 'Italian',
     'ja': 'Japanese',
+    'kn': 'Kannada',
     'ko': 'Korean',
     'ml': 'Malayalam',
     'mr': 'Marathi',
     'pt': 'Portuguese',
+    'pa': 'Punjabi',
+    'ru': 'Russian',
     'ta': 'Tamil',
     'te': 'Telugu',
     'ur': 'Urdu',
@@ -77,6 +85,9 @@ class _CameraScreenState extends State<CameraScreen> {
       if (mounted) setState(() => _isSpeaking = false);
     });
     _textToSpeech.setErrorHandler((_) {
+      if (mounted) setState(() => _isSpeaking = false);
+    });
+    _regionalSpeechPlayer.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _isSpeaking = false);
     });
     if (widget.demoText != null) {
@@ -185,6 +196,7 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void dispose() {
     unawaited(_textToSpeech.stop());
+    unawaited(_regionalSpeechPlayer.dispose());
     unawaited(_captureSpeech.stop());
     _controller?.dispose();
     super.dispose();
@@ -196,6 +208,7 @@ class _CameraScreenState extends State<CameraScreen> {
   }) async {
     if (_isSpeaking) {
       await _textToSpeech.stop();
+      await _regionalSpeechPlayer.stop();
       if (mounted) setState(() => _isSpeaking = false);
       return;
     }
@@ -208,8 +221,27 @@ class _CameraScreenState extends State<CameraScreen> {
       );
       if (languageAvailable != true) {
         if (!mounted) return;
-        setState(() => _isSpeaking = false);
         final languageName = _languages[speechLanguageCode] ?? 'This language';
+        if (speechLanguageCode == 'ml') {
+          setState(() => _isSpeaking = true);
+          try {
+            final audio = await RegionalSpeechService().synthesize(
+              text,
+              languageCode: speechLanguageCode,
+            );
+            await _regionalSpeechPlayer.play(
+              BytesSource(audio, mimeType: 'audio/wav'),
+            );
+          } catch (error) {
+            if (!mounted) return;
+            setState(() => _isSpeaking = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not read Malayalam aloud: $error')),
+            );
+          }
+          return;
+        }
+        setState(() => _isSpeaking = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -238,16 +270,21 @@ class _CameraScreenState extends State<CameraScreen> {
   String _speechLocale(String code) {
     const locales = {
       'ar': 'ar-SA',
+      'bn': 'bn-IN',
       'de': 'de-DE',
       'es': 'es-ES',
       'fr': 'fr-FR',
+      'gu': 'gu-IN',
       'hi': 'hi-IN',
       'it': 'it-IT',
       'ja': 'ja-JP',
+      'kn': 'kn-IN',
       'ko': 'ko-KR',
       'ml': 'ml-IN',
       'mr': 'mr-IN',
       'pt': 'pt-BR',
+      'pa': 'pa-IN',
+      'ru': 'ru-RU',
       'ta': 'ta-IN',
       'te': 'te-IN',
       'ur': 'ur-PK',
@@ -475,6 +512,16 @@ class _CameraScreenState extends State<CameraScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8, bottom: 4),
+                              child: Text(
+                                'Translate into Indian languages. Scanned text recognition currently supports English, Arabic, Russian, German, French, Italian, Portuguese, and Spanish.',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
                             _languagePicker('From', _sourceLanguageInputCode, (
                               code,
                             ) {

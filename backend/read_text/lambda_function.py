@@ -1,5 +1,6 @@
 """Ava's HTTP API handler for secure image uploads, OCR, translation, and alerts."""
 
+import base64
 import json
 import os
 import re
@@ -16,24 +17,32 @@ BUCKET = os.environ["IMAGE_BUCKET"]
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png"}
 s3 = boto3.client("s3", region_name=REGION)
 rekognition = boto3.client("rekognition", region_name=REGION)
+textract = boto3.client("textract", region_name=REGION)
 translate = boto3.client("translate", region_name=REGION)
 sns = boto3.client("sns", region_name=REGION)
+sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=REGION)
 dynamodb = boto3.resource("dynamodb", region_name=REGION)
 ITEM_MEMORY_TABLE = os.environ.get("ITEM_MEMORY_TABLE", "")
 EMERGENCY_TOPIC_ARN = os.environ.get("EMERGENCY_TOPIC_ARN", "")
+INDIC_TTS_ENDPOINT_NAME = os.environ.get("INDIC_TTS_ENDPOINT_NAME", "")
 SUPPORTED_LANGUAGES = {
     "ar": "Arabic",
+    "bn": "Bengali",
     "de": "German",
     "en": "English",
     "es": "Spanish",
     "fr": "French",
+    "gu": "Gujarati",
     "hi": "Hindi",
     "it": "Italian",
     "ja": "Japanese",
+    "kn": "Kannada",
     "ko": "Korean",
     "ml": "Malayalam",
     "mr": "Marathi",
     "pt": "Portuguese",
+    "pa": "Punjabi",
+    "ru": "Russian",
     "ta": "Tamil",
     "te": "Telugu",
     "ur": "Urdu",
@@ -98,6 +107,8 @@ def lambda_handler(event, context):
         return _read_text(_body(event))
     if route == "POST /translate":
         return _translate_image(_body(event))
+    if route == "POST /speak":
+        return _synthesize_indic_speech(_body(event))
     if route == "POST /describe":
         return _describe_surroundings(_body(event))
     if route == "POST /emergency-alert":
@@ -214,26 +225,25 @@ def _read_text(payload):
         return _response(400, {"error": "Uploaded object is not a JPEG or PNG image"})
 
     try:
-        result = rekognition.detect_text(
-            Image={"S3Object": {"Bucket": BUCKET, "Name": key}}
+        result = textract.detect_document_text(
+            Document={"S3Object": {"Bucket": BUCKET, "Name": key}}
         )
     except ClientError as error:
         error_code = error.response.get("Error", {}).get("Code")
-        if error_code == "SubscriptionRequiredException":
+        if error_code in {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}:
             return _response(
                 503,
                 {
                     "error": (
-                        "Amazon Rekognition is unavailable to this AWS account. "
-                        "Check the account plan or contact AWS Support."
+                        "The Lambda execution role needs textract:DetectDocumentText permission."
                     )
                 },
             )
         raise
     lines = [
-        detection["DetectedText"]
-        for detection in result.get("TextDetections", [])
-        if detection.get("Type") == "LINE" and detection.get("DetectedText")
+        block["Text"]
+        for block in result.get("Blocks", [])
+        if block.get("BlockType") == "LINE" and block.get("Text")
     ]
     return _response(200, {"text": "\n".join(lines), "lines": lines})
 
@@ -405,7 +415,52 @@ def _describe_surroundings(payload):
         response["targetDetected"] = target_detected
         response["matches"] = matches
         response["found"] = bool(matches)
-    return _response(200, response)
+        return _response(200, response)
+
+
+def _synthesize_indic_speech(payload):
+    """Generate Malayalam audio through the configured SageMaker endpoint."""
+    if not INDIC_TTS_ENDPOINT_NAME:
+        return _response(503, {"error": "Regional speech is not configured yet."})
+
+    text = payload.get("text")
+    language_code = payload.get("languageCode")
+    if language_code != "ml":
+        return _response(400, {"error": "Only Malayalam speech is enabled in this prototype."})
+    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+        return _response(400, {"error": "Text must be between 1 and 2,000 characters."})
+
+    try:
+        result = sagemaker_runtime.invoke_endpoint(
+            EndpointName=INDIC_TTS_ENDPOINT_NAME,
+            ContentType="application/json",
+            Accept="audio/wav",
+            Body=json.dumps(
+                {"text": text.strip(), "languageCode": language_code}
+            ).encode("utf-8"),
+        )
+        audio = result["Body"].read()
+        if not audio:
+            return _response(502, {"error": "The speech model returned empty audio."})
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "audio/wav",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "content-type,authorization",
+                "Access-Control-Allow-Methods": "POST,OPTIONS",
+            },
+            "isBase64Encoded": True,
+            "body": base64.b64encode(audio).decode("ascii"),
+        }
+    except ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code in {"AccessDenied", "AccessDeniedException"}:
+            return _response(
+                503,
+                {"error": "The Lambda role needs sagemaker:InvokeEndpoint permission."},
+            )
+        return _response(502, {"error": "The regional speech service could not create audio."})
 
 
 def _send_emergency_alert(payload):
