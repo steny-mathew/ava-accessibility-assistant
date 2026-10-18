@@ -88,13 +88,13 @@ API Gateway applies stage throttling: the default limit is 5 requests per second
 
 ## Current limitation
 
-Amazon Textract currently returns `SubscriptionRequiredException` for this AWS account, so Ava's Read Text endpoint uses Amazon Rekognition `DetectText` instead. Rekognition text detection has a 100-word limit per image. Translate supports English, Arabic, Chinese (Simplified), French, German, Hindi, Italian, Japanese, Korean, Malayalam, Marathi, Portuguese, Spanish, Tamil, Telugu, and Urdu. Its Lambda role needs `translate:TranslateText`. Amazon Translate returned `SubscriptionRequiredException` during the live integration test, so translation is not confirmed available for this AWS account yet.
+Amazon Textract currently returns `SubscriptionRequiredException` for this AWS account, so Ava's Read Text endpoint uses Amazon Rekognition `DetectText` instead. Rekognition text detection has a 100-word limit per image. Translate supports English, Arabic, Chinese (Simplified), French, German, Hindi, Italian, Japanese, Korean, Malayalam, Marathi, Portuguese, Spanish, Tamil, Telugu, and Urdu. The existing Lambda role has `translate:TranslateText` permission. A live Lambda smoke test successfully recognized “Hello world” from an uploaded test image and returned the Hindi translation “हेलो वर्ल्ड”.
 
 ## Next implementation steps
 
 1. Test Describe Surroundings with real camera photos on the iPhone and review label quality.
 2. Sign up and confirm an account on the iPhone, then verify authenticated Read Text and other backend calls.
-3. Resolve Amazon Textract and Amazon Translate account access if those services are needed.
+3. Resolve Amazon Textract account access if Textract is needed; current Read Text OCR uses Rekognition.
 4. Test voice memory and screen-reader interaction with blind and low-vision users.
 
 The DynamoDB table can incur charges for stored data and read/write requests. On-demand billing charges according to use; check AWS Billing for account-specific credits and current charges.

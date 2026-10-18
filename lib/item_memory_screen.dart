@@ -5,6 +5,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'item_memory_service.dart';
+import 'speech_output.dart';
 
 class ItemMemoryScreen extends StatefulWidget {
   final String initialAction;
@@ -255,6 +256,7 @@ class _ItemMemoryScreenState extends State<ItemMemoryScreen> {
 
   Future<void> _announce(String text) async {
     try {
+      await configureSpeechOutput(_tts);
       await _tts.setSpeechRate(0.44);
       await _tts.awaitSpeakCompletion(true);
       await _tts.speak(text);

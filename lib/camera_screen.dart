@@ -7,6 +7,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'read_text_service.dart';
+import 'speech_output.dart';
 
 class CameraScreen extends StatefulWidget {
   final String mode;
@@ -93,6 +94,7 @@ class _CameraScreenState extends State<CameraScreen> {
     final request = item == null || item.isEmpty
         ? 'Point your camera toward the area, then take a photo.'
         : 'Ava will look for $item. Point your camera toward the area, then tap the microphone and say take photo, or use the take photo button.';
+    await configureSpeechOutput(_textToSpeech);
     await _textToSpeech.setSpeechRate(0.45);
     await _textToSpeech.setVolume(1.0);
     await _textToSpeech.speak(
@@ -199,7 +201,25 @@ class _CameraScreenState extends State<CameraScreen> {
     }
 
     try {
-      await _textToSpeech.setLanguage(_speechLocale(speechLanguageCode));
+      await configureSpeechOutput(_textToSpeech);
+      final speechLocale = _speechLocale(speechLanguageCode);
+      final languageAvailable = await _textToSpeech.isLanguageAvailable(
+        speechLocale,
+      );
+      if (languageAvailable != true) {
+        if (!mounted) return;
+        setState(() => _isSpeaking = false);
+        final languageName = _languages[speechLanguageCode] ?? 'This language';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$languageName speech is not available on this iPhone. The translation is still shown as text.',
+            ),
+          ),
+        );
+        return;
+      }
+      await _textToSpeech.setLanguage(speechLocale);
       await _textToSpeech.setSpeechRate(0.45);
       await _textToSpeech.setVolume(1.0);
       await _textToSpeech.awaitSpeakCompletion(true);
