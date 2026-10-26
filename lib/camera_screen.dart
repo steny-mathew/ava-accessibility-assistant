@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,7 +7,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'read_text_service.dart';
-import 'regional_speech_service.dart';
+import 'languages.dart';
 import 'speech_output.dart';
 import 'ava_theme.dart';
 
@@ -31,7 +30,6 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen>
     with WidgetsBindingObserver {
   final FlutterTts _textToSpeech = FlutterTts();
-  final AudioPlayer _regionalSpeechPlayer = AudioPlayer();
   final stt.SpeechToText _captureSpeech = stt.SpeechToText();
   CameraController? _controller;
   List<CameraDescription> _cameras = [];
@@ -57,30 +55,6 @@ class _CameraScreenState extends State<CameraScreen>
   String _sourceLanguageInputCode = 'en';
   String _targetLanguageCode = 'hi';
 
-  static const _languages = <String, String>{
-    'en': 'English',
-    'ar': 'Arabic',
-    'bn': 'Bengali',
-    'de': 'German',
-    'es': 'Spanish',
-    'fr': 'French',
-    'gu': 'Gujarati',
-    'hi': 'Hindi',
-    'it': 'Italian',
-    'ja': 'Japanese',
-    'kn': 'Kannada',
-    'ko': 'Korean',
-    'ml': 'Malayalam',
-    'mr': 'Marathi',
-    'pt': 'Portuguese',
-    'pa': 'Punjabi',
-    'ru': 'Russian',
-    'ta': 'Tamil',
-    'te': 'Telugu',
-    'ur': 'Urdu',
-    'zh': 'Chinese (Simplified)',
-  };
-
   @override
   void initState() {
     super.initState();
@@ -92,9 +66,6 @@ class _CameraScreenState extends State<CameraScreen>
       if (mounted) setState(() => _isSpeaking = false);
     });
     _textToSpeech.setErrorHandler((_) {
-      if (mounted) setState(() => _isSpeaking = false);
-    });
-    _regionalSpeechPlayer.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _isSpeaking = false);
     });
     if (widget.demoText != null) {
@@ -252,7 +223,6 @@ class _CameraScreenState extends State<CameraScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_textToSpeech.stop());
-    unawaited(_regionalSpeechPlayer.dispose());
     unawaited(_captureSpeech.stop());
     _controller?.dispose();
     super.dispose();
@@ -275,26 +245,8 @@ class _CameraScreenState extends State<CameraScreen>
       );
       if (languageAvailable != true) {
         if (!mounted) return;
-        final languageName = _languages[speechLanguageCode] ?? 'This language';
-        if (speechLanguageCode == 'ml') {
-          setState(() => _isSpeaking = true);
-          try {
-            final audio = await RegionalSpeechService().synthesize(
-              text,
-              languageCode: speechLanguageCode,
-            );
-            await _regionalSpeechPlayer.play(
-              BytesSource(audio, mimeType: 'audio/wav'),
-            );
-          } catch (error) {
-            if (!mounted) return;
-            setState(() => _isSpeaking = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Could not read Malayalam aloud: $error')),
-            );
-          }
-          return;
-        }
+        final languageName =
+            avaTranslationLanguages[speechLanguageCode] ?? 'This language';
         setState(() => _isSpeaking = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -323,34 +275,11 @@ class _CameraScreenState extends State<CameraScreen>
 
   Future<void> _stopReading() async {
     await _textToSpeech.stop();
-    await _regionalSpeechPlayer.stop();
     if (mounted) setState(() => _isSpeaking = false);
   }
 
   String _speechLocale(String code) {
-    const locales = {
-      'ar': 'ar-SA',
-      'bn': 'bn-IN',
-      'de': 'de-DE',
-      'es': 'es-ES',
-      'fr': 'fr-FR',
-      'gu': 'gu-IN',
-      'hi': 'hi-IN',
-      'it': 'it-IT',
-      'ja': 'ja-JP',
-      'kn': 'kn-IN',
-      'ko': 'ko-KR',
-      'ml': 'ml-IN',
-      'mr': 'mr-IN',
-      'pt': 'pt-BR',
-      'pa': 'pa-IN',
-      'ru': 'ru-RU',
-      'ta': 'ta-IN',
-      'te': 'te-IN',
-      'ur': 'ur-PK',
-      'zh': 'zh-CN',
-    };
-    return locales[code] ?? 'en-US';
+    return avaSpeechLocales[code] ?? 'en-US';
   }
 
   Future<void> _takePicture() async {
@@ -612,16 +541,22 @@ class _CameraScreenState extends State<CameraScreen>
                                 ),
                               ),
                             ),
-                            _languagePicker('From', _sourceLanguageInputCode, (
-                              code,
-                            ) {
-                              if (code != null) {
-                                setState(() => _sourceLanguageInputCode = code);
-                              }
-                            }),
+                            _languagePicker(
+                              'From',
+                              _sourceLanguageInputCode,
+                              avaPhotoTextLanguages,
+                              (code) {
+                                if (code != null) {
+                                  setState(
+                                    () => _sourceLanguageInputCode = code,
+                                  );
+                                }
+                              },
+                            ),
                             _languagePicker(
                               'Translate to',
                               _targetLanguageCode,
+                              avaTranslationLanguages,
                               (code) {
                                 if (code != null) {
                                   setState(() => _targetLanguageCode = code);
@@ -724,6 +659,7 @@ class _CameraScreenState extends State<CameraScreen>
   Widget _languagePicker(
     String label,
     String value,
+    Map<String, String> languages,
     ValueChanged<String?> onChanged,
   ) {
     return Row(
@@ -735,7 +671,7 @@ class _CameraScreenState extends State<CameraScreen>
               value: value,
               isExpanded: true,
               dropdownColor: AvaColors.surface,
-              items: _languages.entries
+              items: languages.entries
                   .map(
                     (language) => DropdownMenuItem(
                       value: language.key,
@@ -782,7 +718,7 @@ class _CameraScreenState extends State<CameraScreen>
             const SizedBox(height: 8),
             if (_readError == null)
               Text(
-                '${_sourceLanguageName ?? _languages[_sourceLanguageCode] ?? 'Source'} · ${_targetLanguageName ?? _languages[_targetLanguageCode]}',
+                '${_sourceLanguageName ?? avaTranslationLanguages[_sourceLanguageCode] ?? 'Source'} · ${_targetLanguageName ?? avaTranslationLanguages[_targetLanguageCode]}',
                 style: const TextStyle(color: AvaColors.muted),
               ),
             const SizedBox(height: 16),

@@ -1,6 +1,5 @@
 """Ava's HTTP API handler for secure image uploads, OCR, translation, and alerts."""
 
-import base64
 import json
 import os
 import re
@@ -20,11 +19,9 @@ rekognition = boto3.client("rekognition", region_name=REGION)
 textract = boto3.client("textract", region_name=REGION)
 translate = boto3.client("translate", region_name=REGION)
 sns = boto3.client("sns", region_name=REGION)
-sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=REGION)
 dynamodb = boto3.resource("dynamodb", region_name=REGION)
 ITEM_MEMORY_TABLE = os.environ.get("ITEM_MEMORY_TABLE", "")
 EMERGENCY_TOPIC_ARN = os.environ.get("EMERGENCY_TOPIC_ARN", "")
-INDIC_TTS_ENDPOINT_NAME = os.environ.get("INDIC_TTS_ENDPOINT_NAME", "")
 SUPPORTED_LANGUAGES = {
     "ar": "Arabic",
     "bn": "Bengali",
@@ -48,6 +45,7 @@ SUPPORTED_LANGUAGES = {
     "ur": "Urdu",
     "zh": "Chinese (Simplified)",
 }
+PHOTO_TEXT_LANGUAGES = {"ar", "de", "en", "es", "fr", "it", "pt", "ru"}
 
 
 def _response(status_code, payload):
@@ -106,9 +104,10 @@ def lambda_handler(event, context):
     if route == "POST /read-text":
         return _read_text(_body(event))
     if route == "POST /translate":
-        return _translate_image(_body(event))
-    if route == "POST /speak":
-        return _synthesize_indic_speech(_body(event))
+        payload = _body(event)
+        if "text" in payload:
+            return _translate_text(payload)
+        return _translate_image(payload)
     if route == "POST /describe":
         return _describe_surroundings(_body(event))
     if route == "POST /emergency-alert":
@@ -253,9 +252,17 @@ def _translate_image(payload):
     key = unquote(payload.get("key", ""))
     target_language = payload.get("targetLanguageCode")
     source_language = payload.get("sourceLanguageCode")
-    if source_language not in SUPPORTED_LANGUAGES:
-        return _response(400, {"error": "Choose a supported source language"})
-    if target_language not in SUPPORTED_LANGUAGES:
+    if not isinstance(source_language, str) or source_language not in PHOTO_TEXT_LANGUAGES:
+        return _response(
+            400,
+            {
+                "error": (
+                    "Photo translation can read English, Arabic, Russian, German, "
+                    "French, Italian, Portuguese, and Spanish text."
+                )
+            },
+        )
+    if not isinstance(target_language, str) or target_language not in SUPPORTED_LANGUAGES:
         return _response(400, {"error": "Choose a supported target language"})
     if bucket != BUCKET or not key.startswith("uploads/") or ".." in key:
         return _response(400, {"error": "Invalid uploaded image reference"})
@@ -316,6 +323,50 @@ def _translate_image(payload):
             "text": source_text,
             "translatedText": result.get("TranslatedText", ""),
             "sourceLanguageCode": result.get("SourceLanguageCode", ""),
+            "targetLanguageCode": result.get("TargetLanguageCode", target_language),
+            "sourceLanguageName": SUPPORTED_LANGUAGES[source_language],
+            "targetLanguageName": SUPPORTED_LANGUAGES[target_language],
+        },
+    )
+
+
+def _translate_text(payload):
+    source_text = payload.get("text")
+    source_language = payload.get("sourceLanguageCode")
+    target_language = payload.get("targetLanguageCode")
+    if not isinstance(source_text, str) or not source_text.strip():
+        return _response(400, {"error": "Enter text to translate."})
+    source_text = source_text.strip()
+    if len(source_text) > 5000:
+        return _response(400, {"error": "Text must be 5,000 characters or fewer."})
+    if not isinstance(source_language, str) or source_language not in SUPPORTED_LANGUAGES:
+        return _response(400, {"error": "Choose a supported source language."})
+    if not isinstance(target_language, str) or target_language not in SUPPORTED_LANGUAGES:
+        return _response(400, {"error": "Choose a supported target language."})
+
+    try:
+        result = translate.translate_text(
+            Text=source_text,
+            SourceLanguageCode=source_language,
+            TargetLanguageCode=target_language,
+        )
+    except ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code == "SubscriptionRequiredException":
+            return _response(503, {"error": "Amazon Translate is unavailable for this account."})
+        if error_code in {"AccessDenied", "AccessDeniedException", "UnauthorizedException"}:
+            return _response(
+                503,
+                {"error": "The ava-lambda-role needs translate:TranslateText permission."},
+            )
+        raise
+
+    return _response(
+        200,
+        {
+            "text": source_text,
+            "translatedText": result.get("TranslatedText", ""),
+            "sourceLanguageCode": result.get("SourceLanguageCode", source_language),
             "targetLanguageCode": result.get("TargetLanguageCode", target_language),
             "sourceLanguageName": SUPPORTED_LANGUAGES[source_language],
             "targetLanguageName": SUPPORTED_LANGUAGES[target_language],
@@ -416,51 +467,7 @@ def _describe_surroundings(payload):
         response["matches"] = matches
         response["found"] = bool(matches)
         return _response(200, response)
-
-
-def _synthesize_indic_speech(payload):
-    """Generate Malayalam audio through the configured SageMaker endpoint."""
-    if not INDIC_TTS_ENDPOINT_NAME:
-        return _response(503, {"error": "Regional speech is not configured yet."})
-
-    text = payload.get("text")
-    language_code = payload.get("languageCode")
-    if language_code != "ml":
-        return _response(400, {"error": "Only Malayalam speech is enabled in this prototype."})
-    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
-        return _response(400, {"error": "Text must be between 1 and 2,000 characters."})
-
-    try:
-        result = sagemaker_runtime.invoke_endpoint(
-            EndpointName=INDIC_TTS_ENDPOINT_NAME,
-            ContentType="application/json",
-            Accept="audio/wav",
-            Body=json.dumps(
-                {"text": text.strip(), "languageCode": language_code}
-            ).encode("utf-8"),
-        )
-        audio = result["Body"].read()
-        if not audio:
-            return _response(502, {"error": "The speech model returned empty audio."})
-        return {
-            "statusCode": 200,
-            "headers": {
-                "Content-Type": "audio/wav",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "content-type,authorization",
-                "Access-Control-Allow-Methods": "POST,OPTIONS",
-            },
-            "isBase64Encoded": True,
-            "body": base64.b64encode(audio).decode("ascii"),
-        }
-    except ClientError as error:
-        error_code = error.response.get("Error", {}).get("Code")
-        if error_code in {"AccessDenied", "AccessDeniedException"}:
-            return _response(
-                503,
-                {"error": "The Lambda role needs sagemaker:InvokeEndpoint permission."},
-            )
-        return _response(502, {"error": "The regional speech service could not create audio."})
+    return _response(200, response)
 
 
 def _send_emergency_alert(payload):

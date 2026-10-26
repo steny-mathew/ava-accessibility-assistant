@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'cognito_auth_service.dart';
 import 'ava_theme.dart';
@@ -67,6 +69,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _codeController = TextEditingController();
+  final _confirmationCodeFocusNode = FocusNode();
 
   bool _creatingAccount = false;
   bool _awaitingConfirmation = false;
@@ -81,6 +84,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _codeController.dispose();
+    _confirmationCodeFocusNode.dispose();
     super.dispose();
   }
 
@@ -98,19 +102,56 @@ class _AuthScreenState extends State<AuthScreen> {
       final auth = CognitoAuthService.instance;
 
       if (_awaitingConfirmation) {
-        await auth.confirmSignUp(email, _codeController.text);
-        await auth.signIn(email, password);
+        final code = _codeController.text.trim();
+        if (code.isEmpty) {
+          throw Exception('Enter the confirmation code from your email.');
+        }
+        if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+          throw Exception('Enter the 6-digit code from your email.');
+        }
+        await auth.confirmSignUp(email, code);
+        if (!mounted) return;
+        setState(() {
+          _awaitingConfirmation = false;
+          _creatingAccount = false;
+          _codeController.clear();
+          _info = 'Email confirmed. Signing in…';
+        });
+        try {
+          await auth.signIn(email, password);
+        } on CognitoAuthException catch (error) {
+          if (error.code == 'NotAuthorizedException') {
+            throw Exception(
+              'Your email is confirmed. Sign in with the password you originally chose.',
+            );
+          }
+          rethrow;
+        }
         widget.onAuthenticated();
       } else if (_creatingAccount) {
         if (password != _confirmPasswordController.text) {
           throw Exception('The passwords do not match.');
         }
-        await auth.signUp(email, password);
+        final result = await auth.signUpOrResumeConfirmation(email, password);
         if (!mounted) return;
-        setState(() {
-          _awaitingConfirmation = true;
-          _info = 'Enter the confirmation code Cognito emailed to you.';
-        });
+        switch (result) {
+          case CognitoSignUpResult.confirmationSent:
+            _showConfirmationStep(
+              'Enter the confirmation code Cognito emailed to you.',
+            );
+          case CognitoSignUpResult.confirmationResent:
+            _showConfirmationStep(
+              'An unverified account already exists. We sent a fresh code. '
+              'After confirming, sign in with the password you originally chose.',
+            );
+          case CognitoSignUpResult.alreadyConfirmed:
+            setState(() {
+              _creatingAccount = false;
+              _awaitingConfirmation = false;
+              _confirmPasswordController.clear();
+              _info = 'This email is already verified. Sign in with your existing password.';
+            });
+        }
       } else {
         await auth.signIn(email, password);
         widget.onAuthenticated();
@@ -124,6 +165,18 @@ class _AuthScreenState extends State<AuthScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _showConfirmationStep(String message) {
+    setState(() {
+      _awaitingConfirmation = true;
+      _info = message;
+      _error = null;
+      _codeController.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _confirmationCodeFocusNode.requestFocus();
+    });
   }
 
   Future<void> _resendCode() async {
@@ -277,13 +330,32 @@ class _AuthScreenState extends State<AuthScreen> {
                 ] else ...[
                   TextField(
                     controller: _codeController,
+                    focusNode: _confirmationCodeFocusNode,
                     enabled: !_busy,
-                    keyboardType: TextInputType.number,
+                    autofocus: true,
+                    keyboardType:
+                        kIsWeb &&
+                            (defaultTargetPlatform == TargetPlatform.macOS ||
+                                defaultTargetPlatform ==
+                                    TargetPlatform.windows ||
+                                defaultTargetPlatform == TargetPlatform.linux)
+                        ? TextInputType.text
+                        : TextInputType.number,
                     textInputAction: TextInputAction.done,
+                    autofillHints: const [AutofillHints.oneTimeCode],
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(6),
+                    ],
+                    maxLength: 6,
+                    onChanged: (_) {
+                      if (_error != null) setState(() => _error = null);
+                    },
                     onSubmitted: (_) => _submit(),
                     decoration: const InputDecoration(
                       labelText: 'Email confirmation code',
                       prefixIcon: Icon(Icons.verified_user_outlined),
+                      counterText: '',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -338,7 +410,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                 const SizedBox(height: 14),
                 const Text(
-                  'Your password is sent securely to Amazon Cognito. Ava stores session tokens in the iPhone Keychain.',
+                  'Your password is sent securely to Amazon Cognito. Ava keeps your sign-in session on this device.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AvaColors.muted,

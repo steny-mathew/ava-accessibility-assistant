@@ -7,6 +7,7 @@ import 'auth_screen.dart';
 import 'camera_screen.dart';
 import 'item_memory_screen.dart';
 import 'read_text_service.dart';
+import 'text_translation_screen.dart';
 import 'ava_theme.dart';
 
 void main() {
@@ -143,6 +144,13 @@ class _AvaHomePageState extends State<AvaHomePage> {
     );
   }
 
+  Future<void> _openTextTranslation() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const TextTranslationScreen()),
+    );
+  }
+
   // Understand what the user asked Ava to do.
   void _handleCommand(String command) {
     final text = command.toLowerCase();
@@ -164,7 +172,13 @@ class _AvaHomePageState extends State<AvaHomePage> {
     } else if (_isRecallCommand(text)) {
       _openItemMemory(action: 'recall', item: _itemToRecall(text));
     } else if (text.contains('translate') || text.contains('translation')) {
-      _openCamera('Translate');
+      if (text.contains('sign') ||
+          text.contains('photo') ||
+          text.contains('camera')) {
+        _openCamera('Translate');
+      } else {
+        _openTextTranslation();
+      }
     } else if (text.contains('find ') ||
         text.contains('locate ') ||
         text.contains('where is ') ||
@@ -409,10 +423,17 @@ class _AvaHomePageState extends State<AvaHomePage> {
                 const SizedBox(height: 10),
                 _ActionCard(
                   icon: Icons.translate_outlined,
-                  title: 'Translate text',
-                  description:
-                      'Capture text and translate it into another language.',
+                  title: 'Translate a message',
+                  description: 'Type, paste, or dictate text in Indian and other languages.',
                   accent: AvaColors.amber,
+                  onTap: _openTextTranslation,
+                ),
+                const SizedBox(height: 10),
+                _ActionCard(
+                  icon: Icons.document_scanner_outlined,
+                  title: 'Translate a sign or label',
+                  description: 'Scan printed text in supported scripts, then translate it.',
+                  accent: const Color(0xFF386E68),
                   onTap: () => _openCamera('Translate'),
                 ),
                 const SizedBox(height: 10),

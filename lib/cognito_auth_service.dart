@@ -3,6 +3,22 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+enum CognitoSignUpResult {
+  confirmationSent,
+  confirmationResent,
+  alreadyConfirmed,
+}
+
+class CognitoAuthException implements Exception {
+  final String code;
+  final String message;
+
+  const CognitoAuthException(this.code, this.message);
+
+  @override
+  String toString() => message;
+}
+
 /// Cognito public-client authentication. The app client intentionally has no
 /// client secret; refresh and ID tokens are stored in the platform's secure
 /// storage (Keychain on iOS).
@@ -35,6 +51,29 @@ class CognitoAuthService {
         {'Name': 'email', 'Value': email.trim().toLowerCase()},
       ],
     });
+  }
+
+  Future<CognitoSignUpResult> signUpOrResumeConfirmation(
+    String email,
+    String password,
+  ) async {
+    try {
+      await signUp(email, password);
+      return CognitoSignUpResult.confirmationSent;
+    } on CognitoAuthException catch (error) {
+      if (error.code != 'UsernameExistsException') rethrow;
+    }
+
+    try {
+      await resendConfirmationCode(email);
+      return CognitoSignUpResult.confirmationResent;
+    } on CognitoAuthException catch (error) {
+      if (error.code == 'NotAuthorizedException' &&
+          error.message.toLowerCase().contains('confirmed')) {
+        return CognitoSignUpResult.alreadyConfirmed;
+      }
+      rethrow;
+    }
   }
 
   Future<void> confirmSignUp(String email, String code) async {
@@ -206,7 +245,7 @@ class CognitoAuthService {
           'Too many attempts. Wait a little and try again.',
         _ => error['message'] as String? ?? 'Cognito request failed.',
       };
-      throw Exception(message);
+      throw CognitoAuthException(type, message);
     }
 
     if (decoded is! Map<String, dynamic>) {

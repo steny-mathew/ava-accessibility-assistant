@@ -83,6 +83,43 @@ class ReadTextService {
 class TranslationService {
   static const _apiBaseUrl = String.fromEnvironment('AVA_API_BASE_URL');
 
+  Future<Map<String, String>> translateText({
+    required String text,
+    required String sourceLanguageCode,
+    required String targetLanguageCode,
+  }) async {
+    if (_apiBaseUrl.isEmpty) {
+      throw Exception(
+        'Ava is not connected yet. Configure AVA_API_BASE_URL and restart the app.',
+      );
+    }
+
+    final response = await http
+        .post(
+          Uri.parse(_apiBaseUrl).resolve('/translate'),
+          headers: await CognitoAuthService.instance.authorizationHeaders(),
+          body: jsonEncode({
+            'text': text.trim(),
+            'sourceLanguageCode': sourceLanguageCode,
+            'targetLanguageCode': targetLanguageCode,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    final result = _decodeResponse(response);
+    return {
+      'text': result['text'] as String? ?? text.trim(),
+      'translatedText': result['translatedText'] as String? ?? '',
+      'sourceLanguageCode':
+          result['sourceLanguageCode'] as String? ?? sourceLanguageCode,
+      'targetLanguageCode':
+          result['targetLanguageCode'] as String? ?? targetLanguageCode,
+      'sourceLanguageName':
+          result['sourceLanguageName'] as String? ?? sourceLanguageCode,
+      'targetLanguageName':
+          result['targetLanguageName'] as String? ?? targetLanguageCode,
+    };
+  }
+
   Future<Map<String, String>> translateImage(
     XFile image, {
     required String sourceLanguageCode,
